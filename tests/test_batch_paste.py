@@ -3,9 +3,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from app.storage import make_saved_data, parse_saved_data
+from app.storage import make_export_data, make_saved_data, parse_saved_data, parse_saved_settings
 from core.groups import DEFAULT_GROUP
 from core.importing import normalized_numbers_from_text, preview_import_file, preview_pasted_recipients, rows_to_add
+from core.phone import PHONE_FORMAT_DASHES
 
 
 def raw_phone(area: str = "415", exchange: str = "123", line: str = "4567", separator: str = "-") -> str:
@@ -107,6 +108,24 @@ class BatchPasteTests(unittest.TestCase):
         self.assertEqual(restored_groups, [DEFAULT_GROUP, "Caregivers"])
         self.assertEqual([recipient["phone"] for recipient in restored_recipients], [normalized(), normalized("628")])
         self.assertEqual([recipient["groups"] for recipient in restored_recipients], [["Caregivers"], ["Caregivers"]])
+
+    def test_saved_phone_numbers_remain_e164_when_format_preference_changes(self):
+        rows = preview_pasted_recipients(raw_phone())
+        saved = make_saved_data(rows_to_add(rows, "Caregivers"), ["Caregivers"], {"phone_format": PHONE_FORMAT_DASHES})
+
+        self.assertEqual(saved["settings"]["phone_format"], PHONE_FORMAT_DASHES)
+        self.assertEqual(saved["recipients"][0]["phone"], normalized())
+
+    def test_export_uses_selected_phone_format(self):
+        rows = preview_pasted_recipients(raw_phone())
+        exported = make_export_data(rows_to_add(rows, "Caregivers"), ["Caregivers"], PHONE_FORMAT_DASHES)
+
+        self.assertEqual(exported["recipients"][0]["phone"], "415-123-4567")
+
+    def test_old_data_without_settings_uses_default_phone_format(self):
+        settings = parse_saved_settings({"version": 3, "recipients": [], "groups": []})
+
+        self.assertEqual(settings["phone_format"], "e164")
 
     def test_strict_old_name_phone_format_still_works(self):
         rows = preview_pasted_recipients(f"Amy, {raw_phone()}")

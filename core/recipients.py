@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from .phone import normalize_us_phone
+from .phone import format_phone_number, normalize_us_phone
 
 
 FORMAT_SEPARATORS = {
@@ -23,7 +23,7 @@ class CopyResult:
 
 
 def build_clipboard_output(
-    recipients: Iterable[dict], output_format: str = "comma"
+    recipients: Iterable[dict], output_format: str = "comma", phone_format: str = "e164"
 ) -> CopyResult:
     separator = FORMAT_SEPARATORS.get(output_format, ",")
     selected = 0
@@ -44,7 +44,7 @@ def build_clipboard_output(
             duplicates += 1
             continue
         seen.add(normalized)
-        numbers.append(normalized)
+        numbers.append(format_phone_number(normalized, phone_format))
 
     return CopyResult(
         selected=selected,

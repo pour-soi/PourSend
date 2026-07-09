@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from .phone import normalize_us_phone
+from .phone import format_phone_number, normalize_us_phone, phone_search_digits
 
 
 ALL_RECIPIENTS = "__all__"
 DEFAULT_GROUP = "Default"
+SORT_PHONE = "phone"
+SORT_GROUP = "group"
+SORT_RECENT = "recent"
 
 
 def normalize_group_names(groups: Iterable[str]) -> list[str]:
@@ -172,19 +175,55 @@ def recipient_matches_group(recipient: dict, group_filter: str) -> bool:
     return normalize_recipient_group(recipient) == group_filter
 
 
-def filtered_recipient_indexes(
-    recipients: list[dict], group_filter: str = ALL_RECIPIENTS, query: str = ""
-) -> list[int]:
+def recipient_matches_search(recipient: dict, query: str = "", phone_format: str = "e164") -> bool:
     search = query.strip().lower()
+    if not search:
+        return True
+
+    phone = str(recipient.get("phone", ""))
+    normalized, status = normalize_us_phone(phone)
+    display_phone = format_phone_number(phone, phone_format)
+    group = normalize_recipient_group(recipient)
+    notes = str(recipient.get("notes", ""))
+    text_values = [display_phone, normalized if status == "Valid" else phone, group, notes]
+    if any(search in value.lower() for value in text_values):
+        return True
+
+    search_digits = phone_search_digits(search)
+    if search_digits:
+        phone_values = [display_phone, normalized if status == "Valid" else phone, phone]
+        return any(search_digits in phone_search_digits(value) for value in phone_values)
+    return False
+
+
+def sorted_recipient_indexes(
+    recipients: list[dict], indexes: list[int], sort_field: str = SORT_RECENT, descending: bool = False
+) -> list[int]:
+    if sort_field == SORT_PHONE:
+        by_position = sorted(indexes)
+        return sorted(by_position, key=lambda index: recipient_phone_key(recipients[index]), reverse=descending)
+    if sort_field == SORT_GROUP:
+        by_position = sorted(indexes)
+        return sorted(by_position, key=lambda index: normalize_recipient_group(recipients[index]).lower(), reverse=descending)
+    return sorted(indexes, reverse=descending)
+
+
+def filtered_recipient_indexes(
+    recipients: list[dict],
+    group_filter: str = ALL_RECIPIENTS,
+    query: str = "",
+    phone_format: str = "e164",
+    sort_field: str = SORT_RECENT,
+    descending: bool = False,
+) -> list[int]:
     indexes: list[int] = []
     for index, recipient in enumerate(recipients):
         if not recipient_matches_group(recipient, group_filter):
             continue
-        haystack = f"{recipient.get('phone', '')} {recipient.get('notes', '')}".lower()
-        if search and search not in haystack:
+        if not recipient_matches_search(recipient, query, phone_format):
             continue
         indexes.append(index)
-    return indexes
+    return sorted_recipient_indexes(recipients, indexes, sort_field, descending)
 
 
 def set_selected(recipients: list[dict], indexes: Iterable[int], selected: bool) -> None:

@@ -16,10 +16,14 @@ from core.groups import (
     preferred_group,
     remove_from_group,
     rename_group,
+    SORT_GROUP,
+    SORT_PHONE,
+    SORT_RECENT,
     set_selected,
     valid_group_or_default,
 )
 from core.importing import preview_pasted_recipients, rows_to_add
+from core.phone import PHONE_FORMAT_DASHES, PHONE_FORMAT_PARENS
 from core.recipients import build_clipboard_output
 
 
@@ -188,6 +192,124 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers", "morning"), [0])
         self.assertEqual(filtered_recipient_indexes(recipients, "Job Seekers", "morning"), [])
         self.assertEqual(filtered_recipient_indexes(recipients, "Job Seekers", "628"), [1])
+
+    def test_search_by_displayed_phone_number(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "415-123", PHONE_FORMAT_DASHES),
+            [0],
+        )
+
+    def test_search_by_e164_phone_number(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "+1415123"), [0])
+
+    def test_punctuation_insensitive_and_partial_phone_search(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "(415) 123"), [0])
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "415 123"), [0])
+
+    def test_search_by_group(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "seekers"), [1])
+
+    def test_search_is_case_insensitive_for_notes(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "MORNING"), [0])
+
+    def test_clearing_search_restores_all_recipients(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, ""), [0, 1, 2])
+
+    def test_search_does_not_mutate_recipients(self):
+        recipients = sample_recipients()
+        before = [dict(recipient) for recipient in recipients]
+
+        filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "415")
+
+        self.assertEqual(recipients, before)
+
+    def test_search_works_after_display_format_change(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "(415) 123", PHONE_FORMAT_PARENS),
+            [0],
+        )
+
+    def test_phone_sort_ascending_and_descending(self):
+        recipients = [
+            {"phone": raw_phone("707"), "group": DEFAULT_GROUP},
+            {"phone": raw_phone("415"), "group": DEFAULT_GROUP},
+            {"phone": raw_phone("628"), "group": DEFAULT_GROUP},
+        ]
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_PHONE, False),
+            [1, 2, 0],
+        )
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_PHONE, True),
+            [0, 2, 1],
+        )
+
+    def test_group_sort_ascending_and_descending(self):
+        recipients = [
+            {"phone": raw_phone("415"), "group": "beta"},
+            {"phone": raw_phone("628"), "group": "Alpha"},
+            {"phone": raw_phone("707"), "group": DEFAULT_GROUP},
+        ]
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_GROUP, False),
+            [1, 0, 2],
+        )
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_GROUP, True),
+            [2, 0, 1],
+        )
+
+    def test_recently_added_sort_uses_list_order(self):
+        recipients = sample_recipients()
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_RECENT, False),
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_RECENT, True),
+            [2, 1, 0],
+        )
+
+    def test_sorting_has_stable_secondary_order(self):
+        recipients = [
+            {"phone": raw_phone("415"), "group": "Caregivers"},
+            {"phone": raw_phone("628"), "group": "Caregivers"},
+            {"phone": raw_phone("707"), "group": "Caregivers"},
+        ]
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_GROUP, True),
+            [0, 1, 2],
+        )
+
+    def test_search_and_sorting_compose(self):
+        recipients = [
+            {"phone": raw_phone("707"), "group": "Caregivers", "notes": "call"},
+            {"phone": raw_phone("415"), "group": "Caregivers", "notes": "call"},
+            {"phone": raw_phone("628"), "group": "Caregivers", "notes": "other"},
+        ]
+
+        self.assertEqual(
+            filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "call", "e164", SORT_PHONE, False),
+            [1, 0],
+        )
 
     def test_group_persistence_round_trip(self):
         recipients = sample_recipients()

@@ -3,7 +3,15 @@ import unittest
 from pathlib import Path
 
 from core.importing import detect_csv_columns, parse_pasted_list, read_csv_recipients
-from core.phone import normalize_us_phone
+from core.phone import (
+    PHONE_FORMAT_DASHES,
+    PHONE_FORMAT_DIGITS,
+    PHONE_FORMAT_E164,
+    PHONE_FORMAT_PARENS,
+    PHONE_FORMAT_SPACES,
+    format_phone_number,
+    normalize_us_phone,
+)
 from core.recipients import build_clipboard_output
 
 
@@ -38,6 +46,15 @@ class PhoneNormalizationTests(unittest.TestCase):
         self.assertEqual(normalized, "")
         self.assertTrue(status.startswith("Invalid"))
 
+    def test_phone_display_formats_are_exact(self):
+        value = normalized()
+
+        self.assertEqual(format_phone_number(value, PHONE_FORMAT_E164), "+14151234567")
+        self.assertEqual(format_phone_number(value, PHONE_FORMAT_DIGITS), "4151234567")
+        self.assertEqual(format_phone_number(value, PHONE_FORMAT_DASHES), "415-123-4567")
+        self.assertEqual(format_phone_number(value, PHONE_FORMAT_PARENS), "(415) 123-4567")
+        self.assertEqual(format_phone_number(value, PHONE_FORMAT_SPACES), "+1 415 123 4567")
+
 
 class ClipboardOutputTests(unittest.TestCase):
     def test_filters_selected_deduplicates_and_skips_invalid(self):
@@ -66,6 +83,16 @@ class ClipboardOutputTests(unittest.TestCase):
 
         self.assertEqual(build_clipboard_output(recipients, "semicolon").output, ";".join([normalized(), normalized("628")]))
         self.assertEqual(build_clipboard_output(recipients, "newline").output, "\n".join([normalized(), normalized("628")]))
+
+    def test_phone_display_format_can_be_changed_for_copy(self):
+        recipients = [
+            {"phone": normalized(), "selected": True},
+            {"phone": raw_phone("628"), "selected": True},
+        ]
+
+        result = build_clipboard_output(recipients, "comma", PHONE_FORMAT_DASHES)
+
+        self.assertEqual(result.output, "415-123-4567,628-123-4567")
 
 
 class ImportingTests(unittest.TestCase):

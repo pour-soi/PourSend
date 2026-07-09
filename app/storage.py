@@ -5,10 +5,15 @@ import sys
 from pathlib import Path
 
 from core.groups import collect_groups, ensure_default_group, normalize_group_names, normalize_recipients
+from core.phone import PHONE_FORMAT_E164, format_phone_number, normalize_phone_format
 
 
 APP_FOLDER = "ringcentral_recipient_prep_data"
 DATA_FILE = "recipients.json"
+
+
+def default_settings() -> dict:
+    return {"phone_format": PHONE_FORMAT_E164}
 
 
 def data_path() -> Path:
@@ -45,41 +50,61 @@ def parse_saved_data(data) -> tuple[list[dict], list[str]]:
     raise ValueError("unexpected format")
 
 
-def make_saved_data(recipients: list[dict], groups: list[str]) -> dict:
+def parse_saved_settings(data) -> dict:
+    settings = default_settings()
+    if isinstance(data, dict) and isinstance(data.get("settings"), dict):
+        settings["phone_format"] = normalize_phone_format(data["settings"].get("phone_format"))
+    return settings
+
+
+def make_saved_data(recipients: list[dict], groups: list[str], settings: dict | None = None) -> dict:
     groups = ensure_default_group(groups)
     normalized_recipients = normalize_recipients(recipients, groups)
+    saved_settings = default_settings()
+    if settings:
+        saved_settings["phone_format"] = normalize_phone_format(settings.get("phone_format"))
     return {
         "version": 3,
+        "settings": saved_settings,
         "groups": collect_groups(normalized_recipients, groups),
         "recipients": normalized_recipients,
     }
 
 
-def load_recipient_data() -> tuple[list[dict], list[str], str | None]:
+def make_export_data(
+    recipients: list[dict], groups: list[str], phone_format: str = PHONE_FORMAT_E164, settings: dict | None = None
+) -> dict:
+    data = make_saved_data(recipients, groups, settings)
+    for recipient in data["recipients"]:
+        recipient["phone"] = format_phone_number(recipient.get("phone", ""), phone_format)
+    return data
+
+
+def load_recipient_data() -> tuple[list[dict], list[str], dict, str | None]:
     path = data_path()
     if not path.exists():
-        return [], [], None
+        return [], [], default_settings(), None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return [], [], f"Local data could not be read. A fresh empty list was opened. Details: {exc}"
+        return [], [], default_settings(), f"Local data could not be read. A fresh empty list was opened. Details: {exc}"
 
     try:
         recipients, groups = parse_saved_data(data)
     except ValueError:
-        return [], [], "Local data had an unexpected format. A fresh empty list was opened."
+        return [], [], default_settings(), "Local data had an unexpected format. A fresh empty list was opened."
 
-    return recipients, groups, None
+    return recipients, groups, parse_saved_settings(data), None
 
 
 def load_recipients() -> tuple[list[dict], str | None]:
-    recipients, _groups, error = load_recipient_data()
+    recipients, _groups, _settings, error = load_recipient_data()
     return recipients, error
 
 
-def save_recipient_data(recipients: list[dict], groups: list[str]) -> str | None:
+def save_recipient_data(recipients: list[dict], groups: list[str], settings: dict | None = None) -> str | None:
     try:
-        data_path().write_text(json.dumps(make_saved_data(recipients, groups), indent=2), encoding="utf-8")
+        data_path().write_text(json.dumps(make_saved_data(recipients, groups, settings), indent=2), encoding="utf-8")
     except OSError as exc:
         return f"Could not save local data: {exc}"
     return None

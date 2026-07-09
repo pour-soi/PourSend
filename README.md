@@ -22,8 +22,12 @@ Copy many phone numbers -> Paste List -> Review preview -> Add All Recipients ->
 
 - Add, edit, and delete recipients.
 - Search by phone number or notes.
+- Search instantly while typing.
+- Search phone numbers regardless of punctuation.
 - Organize recipients into groups.
 - Move recipients between groups.
+- Sort recipients by phone number, group, or recently added order.
+- Display, copy, and export phone numbers in selectable formats.
 - View `All Recipients`.
 - Search within the currently selected group.
 - Select all visible recipients with `Select All in This Group`.
@@ -132,7 +136,7 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 69 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, and batch phone-number import.
+The current suite has 87 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, and phone display formatting.
 
 ## Data Location
 

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.dialogs import PasteListDialog, PersonDialog
-from app.storage import load_recipient_data, make_saved_data, save_recipient_data
+from app.storage import load_recipient_data, make_export_data, save_recipient_data
 from core.groups import (
     ALL_RECIPIENTS,
     assign_to_group,
@@ -38,11 +38,14 @@ from core.groups import (
     preferred_group,
     recipient_phone_key,
     rename_group,
+    SORT_GROUP,
+    SORT_PHONE,
+    SORT_RECENT,
     set_selected,
     valid_group_or_default,
 )
 from core.importing import preview_import_file, rows_to_add
-from core.phone import normalize_us_phone
+from core.phone import PHONE_FORMATS, format_phone_number, normalize_us_phone
 from core.recipients import build_clipboard_output
 
 
@@ -54,7 +57,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PourSend")
         self.resize(1180, 700)
-        self.recipients, self.groups, load_error = load_recipient_data()
+        self.recipients, self.groups, self.settings, load_error = load_recipient_data()
         self.recent_group = DEFAULT_GROUP
         self._building_table = False
         self._building_groups = False
@@ -71,6 +74,17 @@ class MainWindow(QMainWindow):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search by phone number or notes")
         self.search.textChanged.connect(self.refresh_table)
+
+        self.sort_field_combo = QComboBox()
+        self.sort_field_combo.addItem("Recently Added", SORT_RECENT)
+        self.sort_field_combo.addItem("Phone Number", SORT_PHONE)
+        self.sort_field_combo.addItem("Group", SORT_GROUP)
+        self.sort_field_combo.currentIndexChanged.connect(self.refresh_table)
+
+        self.sort_direction_combo = QComboBox()
+        self.sort_direction_combo.addItem("Ascending", False)
+        self.sort_direction_combo.addItem("Descending", True)
+        self.sort_direction_combo.currentIndexChanged.connect(self.refresh_table)
 
         add_button = QPushButton("Add Recipient")
         paste_button = QPushButton("Paste List")
@@ -109,6 +123,9 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         top.addWidget(title)
         top.addWidget(self.search, stretch=1)
+        top.addWidget(QLabel("Sort"))
+        top.addWidget(self.sort_field_combo)
+        top.addWidget(self.sort_direction_combo)
         top.addWidget(add_button)
         top.addWidget(paste_button)
         top.addWidget(import_button)
@@ -145,10 +162,20 @@ class MainWindow(QMainWindow):
             tools.addWidget(button)
         tools.addStretch(1)
 
-        self.format_combo = QComboBox()
-        self.format_combo.addItem("Comma-separated", "comma")
-        self.format_combo.addItem("Semicolon-separated", "semicolon")
-        self.format_combo.addItem("One number per line", "newline")
+        self.phone_format_combo = QComboBox()
+        for format_key, label in PHONE_FORMATS:
+            self.phone_format_combo.addItem(label, format_key)
+        saved_format = self.settings.get("phone_format")
+        for index in range(self.phone_format_combo.count()):
+            if self.phone_format_combo.itemData(index) == saved_format:
+                self.phone_format_combo.setCurrentIndex(index)
+                break
+        self.phone_format_combo.currentIndexChanged.connect(self.phone_format_changed)
+
+        self.output_combo = QComboBox()
+        self.output_combo.addItem("Comma-separated", "comma")
+        self.output_combo.addItem("Semicolon-separated", "semicolon")
+        self.output_combo.addItem("One number per line", "newline")
         self.count_label = QLabel("")
         copy_button = QPushButton("Copy Selected Numbers")
         copy_button.setMinimumHeight(48)
@@ -156,8 +183,10 @@ class MainWindow(QMainWindow):
         copy_button.clicked.connect(self.copy_selected)
 
         bottom = QHBoxLayout()
+        bottom.addWidget(QLabel("Phone format"))
+        bottom.addWidget(self.phone_format_combo)
         bottom.addWidget(QLabel("Output format"))
-        bottom.addWidget(self.format_combo)
+        bottom.addWidget(self.output_combo)
         bottom.addStretch(1)
         bottom.addWidget(self.count_label)
 
@@ -229,7 +258,14 @@ class MainWindow(QMainWindow):
         query = self.search.text().strip().lower()
         self._building_table = True
         self.table.setRowCount(0)
-        for index in filtered_recipient_indexes(self.recipients, self.current_group_filter(), query):
+        for index in filtered_recipient_indexes(
+            self.recipients,
+            self.current_group_filter(),
+            query,
+            self.current_phone_format(),
+            self.sort_field_combo.currentData(),
+            self.sort_direction_combo.currentData(),
+        ):
             recipient = self.recipients[index]
             row = self.table.rowCount()
             self.table.insertRow(row)
@@ -238,7 +274,9 @@ class MainWindow(QMainWindow):
             checked.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
             checked.setCheckState(Qt.Checked if recipient.get("selected") else Qt.Unchecked)
             self.table.setItem(row, 0, checked)
-            self.table.setItem(row, 1, QTableWidgetItem(recipient.get("phone", "")))
+            phone_item = QTableWidgetItem(format_phone_number(recipient.get("phone", ""), self.current_phone_format()))
+            phone_item.setToolTip(recipient.get("phone", ""))
+            self.table.setItem(row, 1, phone_item)
             group_item = QTableWidgetItem(normalize_recipient_group(recipient, self.groups))
             group_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.table.setItem(row, 2, group_item)
@@ -501,7 +539,7 @@ class MainWindow(QMainWindow):
         self.save_and_update(selected_group=DEFAULT_GROUP)
 
     def copy_selected(self) -> None:
-        result = build_clipboard_output(self.recipients, self.format_combo.currentData())
+        result = build_clipboard_output(self.recipients, self.output_combo.currentData(), self.current_phone_format())
         if result.selected == 0:
             QMessageBox.information(self, "Copy selected numbers", "No recipients are selected.")
             return
@@ -527,7 +565,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export Backup", "recipients-backup.json", "JSON files (*.json)")
         if not path:
             return
-        error = save_recipients_to_path(self.recipients, self.groups, path)
+        error = save_recipients_to_path(self.recipients, self.groups, path, self.current_phone_format(), self.settings)
         if error:
             QMessageBox.critical(self, "Export backup", error)
         else:
@@ -545,7 +583,7 @@ class MainWindow(QMainWindow):
         self.groups = collect_groups(self.recipients, self.groups)
         if self.recent_group not in self.groups:
             self.recent_group = DEFAULT_GROUP
-        error = save_recipient_data(self.recipients, self.groups)
+        error = save_recipient_data(self.recipients, self.groups, self.settings)
         self.refresh_group_list(selected_group)
         self.refresh_table()
         if error:
@@ -563,13 +601,22 @@ class MainWindow(QMainWindow):
     def valid_group(self, group: str) -> str:
         return valid_group_or_default(group, self.groups)
 
+    def current_phone_format(self) -> str:
+        return self.phone_format_combo.currentData()
 
-def save_recipients_to_path(recipients: list[dict], groups: list[str], path: str) -> str | None:
+    def phone_format_changed(self) -> None:
+        self.settings["phone_format"] = self.current_phone_format()
+        self.save_and_update(selected_group=self.current_group_filter())
+
+
+def save_recipients_to_path(
+    recipients: list[dict], groups: list[str], path: str, phone_format: str = "e164", settings: dict | None = None
+) -> str | None:
     import json
 
     try:
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump(make_saved_data(recipients, groups), handle, indent=2)
+            json.dump(make_export_data(recipients, groups, phone_format, settings), handle, indent=2)
     except OSError as exc:
         return f"Could not export backup: {exc}"
     return None
