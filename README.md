@@ -42,14 +42,14 @@ Copy many phone numbers -> Paste List -> Review preview -> Add All Recipients ->
 - Detect invalid phone numbers before import.
 - Store optional notes for recipients.
 - Save recipients and groups locally between launches.
-- Export a backup.
+- Copy selected recipients or the current search results as displayed numbers, digits only, or E.164.
+- Export recipients to TXT, CSV, or Excel.
+- Export all recipients, the current group, the current search, or the current selection.
+- Export and import JSON backups.
 - Clear all data with confirmation.
 - Normalize valid US phone numbers to `+1XXXXXXXXXX`.
-- Copy only checked recipients.
 - Remove duplicate numbers during copy.
 - Skip invalid numbers during copy.
-- Copy as comma-separated output.
-- Copy as semicolon-separated output.
 - Copy as one number per line.
 
 ## Batch Import Behavior
@@ -136,7 +136,7 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 87 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, and phone display formatting.
+The current suite has 103 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, and backup import/export.
 
 ## Data Location
 

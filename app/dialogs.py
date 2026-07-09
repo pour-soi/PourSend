@@ -238,6 +238,40 @@ def format_preview_status(rows: list[PastePreviewRow]) -> str:
     return "\n".join(lines)
 
 
+class ExportDialog(QDialog):
+    def __init__(self, parent=None, count_by_scope: dict[str, int] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Export Recipients")
+        self.format_combo = QComboBox()
+        self.format_combo.addItem("TXT", "txt")
+        self.format_combo.addItem("CSV", "csv")
+        self.format_combo.addItem("Excel", "xlsx")
+        self.scope_combo = QComboBox()
+        for label, value in [
+            ("All", "all"),
+            ("Current Group", "group"),
+            ("Current Search", "search"),
+            ("Current Selection", "selection"),
+        ]:
+            count = (count_by_scope or {}).get(value, 0)
+            self.scope_combo.addItem(f"{label} ({count})", value)
+
+        form = QFormLayout()
+        form.addRow("Format", self.format_combo)
+        form.addRow("Scope", self.scope_combo)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def values(self) -> tuple[str, str]:
+        return self.format_combo.currentData(), self.scope_combo.currentData()
+
+
 class CsvColumnDialog(QDialog):
     def __init__(self, parent, columns: list[str]):
         super().__init__(parent)

@@ -24,8 +24,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.dialogs import ImportPreviewDialog, PasteListDialog, PersonDialog
-from app.storage import load_recipient_data, make_export_data, save_recipient_data
+from app.dialogs import ExportDialog, ImportPreviewDialog, PasteListDialog, PersonDialog
+from app.storage import load_recipient_data, save_recipient_data
+from core.exporting import (
+    COPY_DIGITS,
+    COPY_DISPLAYED,
+    COPY_E164,
+    SCOPE_ALL,
+    SCOPE_GROUP,
+    SCOPE_SEARCH,
+    SCOPE_SELECTION,
+    backup_json,
+    build_copy_text,
+    export_csv,
+    export_txt,
+    export_xlsx_bytes,
+    parse_backup_json,
+    resolve_recipient_scope,
+)
 from core.groups import (
     ALL_RECIPIENTS,
     assign_to_group,
@@ -47,7 +63,6 @@ from core.groups import (
 )
 from core.importing import preview_import_file, remove_imported_numbers, rows_to_add
 from core.phone import PHONE_FORMATS, format_phone_number, normalize_us_phone
-from core.recipients import build_clipboard_output
 
 
 ALL_RECIPIENTS_LABEL = "All Recipients"
@@ -151,18 +166,32 @@ class MainWindow(QMainWindow):
         edit_button = QPushButton("Edit Recipient")
         delete_button = QPushButton("Delete Recipient")
         undo_import_button = QPushButton("Undo Last Import")
-        export_button = QPushButton("Export Backup")
+        export_button = QPushButton("Export")
+        export_backup_button = QPushButton("Export Backup")
+        import_backup_button = QPushButton("Import Backup")
         clear_button = QPushButton("Clear All Data")
         select_all.clicked.connect(lambda: self.set_all_visible(True))
         deselect_all.clicked.connect(lambda: self.set_all_visible(False))
         edit_button.clicked.connect(self.edit_selected)
         delete_button.clicked.connect(self.delete_selected)
         undo_import_button.clicked.connect(self.undo_last_import)
-        export_button.clicked.connect(self.export_backup)
+        export_button.clicked.connect(self.export_recipients)
+        export_backup_button.clicked.connect(self.export_backup)
+        import_backup_button.clicked.connect(self.import_backup)
         clear_button.clicked.connect(self.clear_all)
 
         tools = QHBoxLayout()
-        for button in [select_all, deselect_all, edit_button, delete_button, undo_import_button, export_button, clear_button]:
+        for button in [
+            select_all,
+            deselect_all,
+            edit_button,
+            delete_button,
+            undo_import_button,
+            export_button,
+            export_backup_button,
+            import_backup_button,
+            clear_button,
+        ]:
             tools.addWidget(button)
         tools.addStretch(1)
 
@@ -176,10 +205,13 @@ class MainWindow(QMainWindow):
                 break
         self.phone_format_combo.currentIndexChanged.connect(self.phone_format_changed)
 
-        self.output_combo = QComboBox()
-        self.output_combo.addItem("Comma-separated", "comma")
-        self.output_combo.addItem("Semicolon-separated", "semicolon")
-        self.output_combo.addItem("One number per line", "newline")
+        self.copy_scope_combo = QComboBox()
+        self.copy_scope_combo.addItem("Selected Numbers", SCOPE_SELECTION)
+        self.copy_scope_combo.addItem("Current Search", SCOPE_SEARCH)
+        self.copy_format_combo = QComboBox()
+        self.copy_format_combo.addItem("Displayed Number", COPY_DISPLAYED)
+        self.copy_format_combo.addItem("Digits Only", COPY_DIGITS)
+        self.copy_format_combo.addItem("E.164", COPY_E164)
         self.count_label = QLabel("")
         copy_button = QPushButton("Copy Selected Numbers")
         copy_button.setMinimumHeight(48)
@@ -189,8 +221,9 @@ class MainWindow(QMainWindow):
         bottom = QHBoxLayout()
         bottom.addWidget(QLabel("Phone format"))
         bottom.addWidget(self.phone_format_combo)
-        bottom.addWidget(QLabel("Output format"))
-        bottom.addWidget(self.output_combo)
+        bottom.addWidget(QLabel("Copy"))
+        bottom.addWidget(self.copy_scope_combo)
+        bottom.addWidget(self.copy_format_combo)
         bottom.addStretch(1)
         bottom.addWidget(self.count_label)
 
@@ -527,6 +560,33 @@ class MainWindow(QMainWindow):
             if index is not None
         ]
 
+    def visible_indexes(self) -> list[int]:
+        return [
+            index
+            for row in range(self.table.rowCount())
+            for index in [self._recipient_index(row)]
+            if index is not None
+        ]
+
+    def scope_selection(self, scope: str):
+        return resolve_recipient_scope(
+            self.recipients,
+            scope,
+            group_filter=self.current_group_filter(),
+            query=self.search.text(),
+            phone_format=self.current_phone_format(),
+            sort_field=self.sort_field_combo.currentData(),
+            descending=self.sort_direction_combo.currentData(),
+        )
+
+    def scope_counts(self) -> dict[str, int]:
+        return {
+            SCOPE_ALL: len(self.scope_selection(SCOPE_ALL).recipients),
+            SCOPE_GROUP: len(self.scope_selection(SCOPE_GROUP).recipients),
+            SCOPE_SEARCH: len(self.scope_selection(SCOPE_SEARCH).recipients),
+            SCOPE_SELECTION: len(self.scope_selection(SCOPE_SELECTION).recipients),
+        }
+
     def create_group(self) -> None:
         name, ok = QInputDialog.getText(self, "New group", "Group name")
         if not ok:
@@ -585,37 +645,99 @@ class MainWindow(QMainWindow):
         self.save_and_update(selected_group=DEFAULT_GROUP)
 
     def copy_selected(self) -> None:
-        result = build_clipboard_output(self.recipients, self.output_combo.currentData(), self.current_phone_format())
-        if result.selected == 0:
-            QMessageBox.information(self, "Copy selected numbers", "No recipients are selected.")
+        selection = self.scope_selection(self.copy_scope_combo.currentData())
+        if not selection.recipients:
+            QMessageBox.information(self, "Copy selected numbers", selection.empty_reason)
             return
-        if result.copied == 0:
+        output = build_copy_text(selection.recipients, self.copy_format_combo.currentData(), self.current_phone_format())
+        if not output:
             QMessageBox.warning(self, "Copy selected numbers", "No valid selected phone numbers were found.")
             return
         try:
-            QApplication.clipboard().setText(result.output)
+            QApplication.clipboard().setText(output)
         except RuntimeError as exc:
             QMessageBox.critical(self, "Copy selected numbers", f"The numbers could not be copied: {exc}")
             return
         QMessageBox.information(
             self,
             "Copy selected numbers",
-            f"Copied {result.copied} unique phone numbers.\n\n"
-            f"Selected: {result.selected}\n"
-            f"Copied: {result.copied}\n"
-            f"Duplicates removed: {result.duplicates_removed}\n"
-            f"Invalid skipped: {result.invalid_skipped}",
+            f"Copied {len(output.splitlines())} phone numbers.",
         )
+
+    def export_recipients(self) -> None:
+        dialog = ExportDialog(self, self.scope_counts())
+        if dialog.exec() != ExportDialog.Accepted:
+            return
+        file_format, scope = dialog.values()
+        selection = self.scope_selection(scope)
+        if not selection.recipients:
+            QMessageBox.information(self, "Export", selection.empty_reason)
+            return
+
+        extensions = {"txt": "txt", "csv": "csv", "xlsx": "xlsx"}
+        filters = {
+            "txt": "Text files (*.txt)",
+            "csv": "CSV files (*.csv)",
+            "xlsx": "Excel files (*.xlsx)",
+        }
+        default_name = f"recipients.{extensions[file_format]}"
+        path, _ = QFileDialog.getSaveFileName(self, "Export", default_name, filters[file_format])
+        if not path:
+            return
+        if "." not in path.rsplit("/", 1)[-1]:
+            path = f"{path}.{extensions[file_format]}"
+        try:
+            if file_format == "txt":
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(export_txt(selection.recipients, self.current_phone_format()))
+            elif file_format == "csv":
+                with open(path, "w", encoding="utf-8", newline="") as handle:
+                    handle.write(export_csv(selection.recipients, self.current_phone_format()))
+            else:
+                with open(path, "wb") as handle:
+                    handle.write(export_xlsx_bytes(selection.recipients, self.current_phone_format()))
+        except OSError as exc:
+            QMessageBox.critical(self, "Export", f"Could not export recipients: {exc}")
+            return
+        QMessageBox.information(self, "Export", "Recipients exported.")
 
     def export_backup(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export Backup", "recipients-backup.json", "JSON files (*.json)")
         if not path:
             return
-        error = save_recipients_to_path(self.recipients, self.groups, path, self.current_phone_format(), self.settings)
-        if error:
-            QMessageBox.critical(self, "Export backup", error)
-        else:
-            QMessageBox.information(self, "Export backup", "Backup exported.")
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(backup_json(self.recipients, self.groups, self.settings))
+        except OSError as exc:
+            QMessageBox.critical(self, "Export backup", f"Could not export backup: {exc}")
+            return
+        QMessageBox.information(self, "Export backup", "Backup exported.")
+
+    def import_backup(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import Backup", "", "JSON files (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                recipients, groups, settings, version = parse_backup_json(handle.read())
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Import backup", f"Backup could not be imported: {exc}")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Import backup",
+            f"Replace existing PourSend data with this backup?\n\n"
+            f"Recipients: {len(recipients)}\nGroups: {len(groups)}\nBackup version: {version}",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.recipients = recipients
+        self.groups = groups
+        self.settings = settings
+        self.last_imported_numbers = []
+        self.set_phone_format(self.settings.get("phone_format"))
+        self.save_and_update(selected_group=ALL_RECIPIENTS)
+        QMessageBox.information(self, "Import backup", "Backup imported.")
 
     def clear_all(self) -> None:
         answer = QMessageBox.question(self, "Clear all data", "Clear all saved recipients?")
@@ -650,22 +772,17 @@ class MainWindow(QMainWindow):
     def current_phone_format(self) -> str:
         return self.phone_format_combo.currentData()
 
+    def set_phone_format(self, format_key: str | None) -> None:
+        for index in range(self.phone_format_combo.count()):
+            if self.phone_format_combo.itemData(index) == format_key:
+                self.phone_format_combo.blockSignals(True)
+                self.phone_format_combo.setCurrentIndex(index)
+                self.phone_format_combo.blockSignals(False)
+                return
+
     def phone_format_changed(self) -> None:
         self.settings["phone_format"] = self.current_phone_format()
         self.save_and_update(selected_group=self.current_group_filter())
-
-
-def save_recipients_to_path(
-    recipients: list[dict], groups: list[str], path: str, phone_format: str = "e164", settings: dict | None = None
-) -> str | None:
-    import json
-
-    try:
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(make_export_data(recipients, groups, phone_format, settings), handle, indent=2)
-    except OSError as exc:
-        return f"Could not export backup: {exc}"
-    return None
 
 
 def main() -> int:

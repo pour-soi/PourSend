@@ -13,6 +13,7 @@ from core.phone import (
     normalize_us_phone,
 )
 from core.recipients import build_clipboard_output
+from core.exporting import COPY_DIGITS, COPY_DISPLAYED, COPY_E164, build_copy_text
 
 
 def raw_phone(area: str = "415", exchange: str = "123", line: str = "4567", separator: str = "-") -> str:
@@ -93,6 +94,16 @@ class ClipboardOutputTests(unittest.TestCase):
         result = build_clipboard_output(recipients, "comma", PHONE_FORMAT_DASHES)
 
         self.assertEqual(result.output, "415-123-4567,628-123-4567")
+
+    def test_copy_modes_use_one_number_per_line(self):
+        recipients = [
+            {"phone": normalized(), "selected": True},
+            {"phone": raw_phone("628"), "selected": True},
+        ]
+
+        self.assertEqual(build_copy_text(recipients, COPY_DISPLAYED, PHONE_FORMAT_DASHES), "415-123-4567\n628-123-4567")
+        self.assertEqual(build_copy_text(recipients, COPY_DIGITS, PHONE_FORMAT_DASHES), "14151234567\n16281234567")
+        self.assertEqual(build_copy_text(recipients, COPY_E164, PHONE_FORMAT_DASHES), "+14151234567\n+16281234567")
 
 
 class ImportingTests(unittest.TestCase):
