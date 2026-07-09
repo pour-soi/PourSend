@@ -5,10 +5,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .phone import normalize_us_phone
+
 
 NAME_COLUMNS = {"name", "full_name", "fullname", "contact", "contact_name"}
 PHONE_COLUMNS = {"phone", "phone_number", "phonenumber", "mobile", "cell", "cell_phone"}
 PHONE_AT_END_RE = re.compile(r"(?P<phone>\+?[\d(][\d\s().-]{6,})\s*$")
+PHONE_CHARS_RE = re.compile(r"^[\d\s().+\-]+$")
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,15 @@ class ParsedRecipient:
 class RejectedRow:
     source: str
     reason: str
+
+
+@dataclass(frozen=True)
+class PastePreviewRow:
+    name: str
+    phone: str
+    normalized: str
+    status: str
+    source: str = ""
 
 
 def parse_pasted_list(text: str) -> tuple[list[ParsedRecipient], list[RejectedRow]]:
@@ -42,6 +54,48 @@ def parse_pasted_list(text: str) -> tuple[list[ParsedRecipient], list[RejectedRo
     return accepted, rejected
 
 
+def preview_pasted_recipients(text: str, existing_numbers: set[str] | None = None) -> list[PastePreviewRow]:
+    existing = existing_numbers or set()
+    seen: set[str] = set()
+    rows: list[PastePreviewRow] = []
+
+    for line_number, line in enumerate((text or "").splitlines(), start=1):
+        source = line.strip()
+        if not source:
+            continue
+        for name, phone in _parse_preview_line(source):
+            normalized, phone_status = normalize_us_phone(phone)
+            if phone_status != "Valid":
+                status = "Invalid"
+            elif normalized in seen:
+                status = "Duplicate in this batch"
+            elif normalized in existing:
+                status = "Already exists"
+            else:
+                status = "Valid"
+                seen.add(normalized)
+            rows.append(
+                PastePreviewRow(
+                    name=name or "None",
+                    phone=phone,
+                    normalized=normalized,
+                    status=status,
+                    source=f"Line {line_number}",
+                )
+            )
+
+    return rows
+
+
+def rows_to_add(rows: list[PastePreviewRow], groups: list[str] | None = None) -> list[dict]:
+    memberships = list(groups or [])
+    return [
+        {"name": row.name, "phone": row.phone, "selected": False, "groups": memberships.copy()}
+        for row in rows
+        if row.status == "Valid"
+    ]
+
+
 def _parse_line(line: str) -> tuple[str, str] | None:
     for delimiter in [",", "\t", ";"]:
         if delimiter in line:
@@ -59,6 +113,43 @@ def _parse_line(line: str) -> tuple[str, str] | None:
     if not name:
         return None
     return name, phone
+
+
+def _parse_preview_line(line: str) -> list[tuple[str, str]]:
+    delimited = _split_delimited(line)
+    if len(delimited) > 1:
+        phone_like = [cell for cell in delimited if _looks_like_phone(cell)]
+        if len(delimited) == 2 and len(phone_like) == 1 and not _looks_like_phone(delimited[0]):
+            return [(delimited[0], delimited[1])]
+        return [("", cell) for cell in delimited]
+
+    if _looks_like_phone(line):
+        return [("", line)]
+
+    parsed = _parse_line(line)
+    if parsed is not None:
+        return [parsed]
+
+    return [("", line)]
+
+
+def _split_delimited(line: str) -> list[str]:
+    if "\t" in line:
+        return [cell.strip() for cell in line.split("\t") if cell.strip()]
+    if ";" in line:
+        return [cell.strip() for cell in line.split(";") if cell.strip()]
+    if "," in line:
+        row = next(csv.reader([line]), [])
+        return [cell.strip() for cell in row if cell.strip()]
+    return [line.strip()]
+
+
+def _looks_like_phone(value: str) -> bool:
+    text = value.strip()
+    if not text or not PHONE_CHARS_RE.fullmatch(text):
+        return False
+    digit_count = sum(char.isdigit() for char in text)
+    return digit_count >= 3
 
 
 def detect_csv_columns(fieldnames: list[str] | None) -> tuple[str | None, str | None]:
