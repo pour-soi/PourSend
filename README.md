@@ -1,6 +1,6 @@
-# RingCentralRecipientPrep
+# PourSend
 
-RingCentralRecipientPrep is a local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying selected recipient numbers for use with RingCentral.
+PourSend is a local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying selected recipient numbers for use with RingCentral.
 
 The application does not send messages itself. You copy prepared recipient numbers from the app, paste them into RingCentral, and send manually.
 
@@ -74,7 +74,7 @@ You can open a group, search within that group, then select or deselect only the
 
 ## Privacy
 
-RingCentralRecipientPrep is local-only.
+PourSend is local-only.
 
 - All recipient data is stored locally.
 - The application makes no network requests.
@@ -110,18 +110,18 @@ python main.py
 This repository includes a manual GitHub Actions workflow that builds:
 
 ```text
-RingCentralRecipientPrep.exe
+PourSend.exe
 ```
 
 To build it:
 
 1. Open the repository on GitHub.
 2. Go to **Actions**.
-3. Select **Build Windows executable**.
+3. Select **Build PourSend Windows executable**.
 4. Click **Run workflow**.
 5. Run the workflow on `main`.
-6. When it finishes, download the `RingCentralRecipientPrep-Windows` artifact.
-7. Extract `RingCentralRecipientPrep.exe`.
+6. When it finishes, download the `PourSend-Windows` artifact.
+7. Extract `PourSend.exe`.
 
 This is a portable executable, not an official signed installer.
 

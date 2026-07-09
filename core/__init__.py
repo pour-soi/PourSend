@@ -1,1 +1,1 @@
-"""Core logic for the RingCentral recipient prep utility."""
+"""Core logic for PourSend."""

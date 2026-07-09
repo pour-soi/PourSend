@@ -51,7 +51,7 @@ UNASSIGNED_LABEL = "Unassigned"
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("RingCentral Recipient Prep")
+        self.setWindowTitle("PourSend")
         self.resize(1180, 700)
         self.recipients, self.groups, load_error = load_recipient_data()
         self._building_table = False
@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Local data", load_error)
 
     def _build_ui(self) -> None:
-        title = QLabel("RingCentral Recipient Prep")
+        title = QLabel("PourSend")
         title.setStyleSheet("font-size: 22px; font-weight: 600;")
 
         self.search = QLineEdit()
