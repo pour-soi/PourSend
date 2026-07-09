@@ -1,6 +1,6 @@
 # PourSend
 
-PourSend is a local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying selected recipient numbers for use with RingCentral.
+PourSend is a local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying checked recipient numbers for use with RingCentral.
 
 The application does not send messages itself. You copy prepared recipient numbers from the app, paste them into RingCentral, and send manually.
 
@@ -32,21 +32,27 @@ Copy many phone numbers -> Paste List -> Review preview -> Add All Recipients ->
 - Search within the currently selected group.
 - Select all visible recipients with `Select All in This Group`.
 - Deselect all visible recipients with `Deselect All in This Group`.
+- Batch edit checked recipients to change their group or replace notes.
 - Import through `Paste List`.
 - Paste phone-only batches.
 - Paste phone numbers from name + phone rows while ignoring names for saved recipients.
 - Import TXT, CSV, and XLSX files with supported phone-number formats.
+- Drag and drop TXT, CSV, or XLSX files into the app to import them.
+- Preview imports before adding recipients.
+- Undo the most recent successful import.
 - Assign a pasted batch to one existing group.
 - Detect duplicates inside a pasted batch.
 - Detect phone numbers that already exist.
 - Detect invalid phone numbers before import.
 - Store optional notes for recipients.
 - Save recipients and groups locally between launches.
-- Copy selected recipients or the current search results as displayed numbers, digits only, or E.164.
+- Copy checked recipients or the current search results as displayed numbers, digits only, or E.164.
 - Export recipients to TXT, CSV, or Excel.
-- Export all recipients, the current group, the current search, or the current selection.
+- Export all recipients, the current group, the current search, or checked recipients.
 - Export and import JSON backups.
 - Clear all data with confirmation.
+- View total recipients, current group count, current search count, stored duplicate count, and checked counts.
+- Use keyboard shortcuts for paste list, search, select visible recipients, undo last import, and delete.
 - Normalize valid US phone numbers to `+1XXXXXXXXXX`.
 - Remove duplicate numbers during copy.
 - Skip invalid numbers during copy.
@@ -74,6 +80,14 @@ A recipient belongs to one group. Records without a valid group fall back to `De
 Deleting a group does not delete the recipients inside it. It moves those recipients to `Default`.
 
 You can open a group, search within that group, then select or deselect only the visible recipients in that group.
+
+## Keyboard Shortcuts
+
+- `Ctrl+V`: open Paste List when focus is not in a text field.
+- `Ctrl+F`: focus the search field.
+- `Ctrl+A`: check all visible recipients when focus is not in a text field.
+- `Ctrl+Z`: undo the most recent successful import when focus is not in a text field.
+- `Delete`: delete the selected recipient rows when focus is not in a text field.
 
 ## Privacy
 
@@ -136,7 +150,7 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 103 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, and backup import/export.
+The current suite has 112 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, backup import/export, and shortcut safety.
 
 ## Data Location
 

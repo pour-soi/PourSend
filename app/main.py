@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,9 +17,11 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -82,6 +84,7 @@ class MainWindow(QMainWindow):
         self._building_table = False
         self._building_groups = False
         self._build_ui()
+        QApplication.instance().installEventFilter(self)
         self.refresh_group_list()
         self.refresh_table()
         if load_error:
@@ -212,14 +215,14 @@ class MainWindow(QMainWindow):
         self.phone_format_combo.currentIndexChanged.connect(self.phone_format_changed)
 
         self.copy_scope_combo = QComboBox()
-        self.copy_scope_combo.addItem("Selected Numbers", SCOPE_SELECTION)
+        self.copy_scope_combo.addItem("Checked Numbers", SCOPE_SELECTION)
         self.copy_scope_combo.addItem("Current Search", SCOPE_SEARCH)
         self.copy_format_combo = QComboBox()
         self.copy_format_combo.addItem("Displayed Number", COPY_DISPLAYED)
         self.copy_format_combo.addItem("Digits Only", COPY_DIGITS)
         self.copy_format_combo.addItem("E.164", COPY_E164)
         self.count_label = QLabel("")
-        copy_button = QPushButton("Copy Selected Numbers")
+        copy_button = QPushButton("Copy Checked Numbers")
         copy_button.setMinimumHeight(48)
         copy_button.setStyleSheet("font-size: 17px; font-weight: 600;")
         copy_button.clicked.connect(self.copy_selected)
@@ -249,17 +252,46 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.addAction(self._shortcut("Ctrl+N", self.add_person))
-        self.addAction(self._shortcut("Ctrl+V", self.paste_list))
-        self.addAction(self._shortcut("Ctrl+F", lambda: self.search.setFocus()))
-        self.addAction(self._shortcut("Ctrl+A", lambda: self.set_all_visible(True)))
-        self.addAction(self._shortcut("Ctrl+Z", self.undo_last_import))
-        self.addAction(self._shortcut("Delete", self.delete_selected))
 
     def _shortcut(self, keys: str, slot) -> QAction:
         action = QAction(self)
         action.setShortcut(QKeySequence(keys))
         action.triggered.connect(slot)
         return action
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() != QEvent.KeyPress or not self.shortcut_focus_is_inside_window():
+            return super().eventFilter(watched, event)
+
+        if event.matches(QKeySequence.Paste):
+            if editable_text_widget_has_focus():
+                return False
+            self.paste_list()
+            return True
+        if event.matches(QKeySequence.Find):
+            self.search.setFocus()
+            return True
+        if event.matches(QKeySequence.SelectAll):
+            if editable_text_widget_has_focus():
+                return False
+            self.set_all_visible(True)
+            return True
+        if event.matches(QKeySequence.Undo):
+            if editable_text_widget_has_focus():
+                return False
+            self.undo_last_import()
+            return True
+        if event.key() == Qt.Key_Delete and event.modifiers() == Qt.NoModifier:
+            if editable_text_widget_has_focus():
+                return False
+            self.delete_selected()
+            return True
+
+        return super().eventFilter(watched, event)
+
+    def shortcut_focus_is_inside_window(self) -> bool:
+        focused = QApplication.focusWidget()
+        return focused is None or focused is self or self.isAncestorOf(focused)
 
     def current_group_filter(self) -> str:
         item = self.group_list.currentItem()
@@ -693,20 +725,20 @@ class MainWindow(QMainWindow):
     def copy_selected(self) -> None:
         selection = self.scope_selection(self.copy_scope_combo.currentData())
         if not selection.recipients:
-            QMessageBox.information(self, "Copy selected numbers", selection.empty_reason)
+            QMessageBox.information(self, "Copy checked numbers", selection.empty_reason)
             return
         output = build_copy_text(selection.recipients, self.copy_format_combo.currentData(), self.current_phone_format())
         if not output:
-            QMessageBox.warning(self, "Copy selected numbers", "No valid selected phone numbers were found.")
+            QMessageBox.warning(self, "Copy checked numbers", "No valid checked phone numbers were found.")
             return
         try:
             QApplication.clipboard().setText(output)
         except RuntimeError as exc:
-            QMessageBox.critical(self, "Copy selected numbers", f"The numbers could not be copied: {exc}")
+            QMessageBox.critical(self, "Copy checked numbers", f"The numbers could not be copied: {exc}")
             return
         QMessageBox.information(
             self,
-            "Copy selected numbers",
+            "Copy checked numbers",
             f"Copied {len(output.splitlines())} phone numbers.",
         )
 
@@ -814,8 +846,8 @@ class MainWindow(QMainWindow):
         group_label = ALL_RECIPIENTS_LABEL if current_group == ALL_RECIPIENTS else current_group
         self.count_label.setText(
             f"Total recipients: {len(self.recipients)} | Current group ({group_label}): {group_count} | "
-            f"Current search: {search_count} | Duplicate count: {duplicates} | "
-            f"Visible selected: {visible_selected} | Total selected: {total_selected}"
+            f"Current search: {search_count} | Stored duplicates: {duplicates} | "
+            f"Visible checked: {visible_selected} | Total checked: {total_selected}"
         )
 
     def valid_group(self, group: str) -> str:
@@ -842,6 +874,17 @@ def main() -> int:
     window = MainWindow()
     window.show()
     return app.exec()
+
+
+def editable_text_widget_has_focus(widget=None) -> bool:
+    focused = widget if widget is not None else QApplication.focusWidget()
+    if focused is None:
+        return False
+    if isinstance(focused, QLineEdit):
+        return not focused.isReadOnly()
+    if isinstance(focused, (QTextEdit, QPlainTextEdit)):
+        return not focused.isReadOnly()
+    return False
 
 
 if __name__ == "__main__":

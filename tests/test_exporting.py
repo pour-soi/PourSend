@@ -107,6 +107,24 @@ class ExportingTests(unittest.TestCase):
         self.assertEqual(settings["phone_format"], PHONE_FORMAT_DASHES)
         self.assertEqual(recipients[0]["phone"], "+14151111111")
 
+    def test_backup_import_accepts_empty_backup_with_default_settings(self):
+        text = backup_json([], [], {})
+
+        recipients, groups, settings, version = parse_backup_json(text)
+
+        self.assertEqual(version, 1)
+        self.assertEqual(recipients, [])
+        self.assertEqual(groups, [DEFAULT_GROUP])
+        self.assertEqual(settings["phone_format"], "e164")
+
+    def test_empty_export_scope_has_clear_reason(self):
+        recipients = [recipient("+14151111111", selected=False)]
+
+        selection = resolve_recipient_scope(recipients, SCOPE_SELECTION)
+
+        self.assertEqual(selection.recipients, [])
+        self.assertEqual(selection.empty_reason, "No recipients match that scope.")
+
     def test_backup_import_rejects_invalid_json(self):
         with self.assertRaises(ValueError):
             parse_backup_json("{")

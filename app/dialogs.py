@@ -282,7 +282,7 @@ class ExportDialog(QDialog):
             ("All", "all"),
             ("Current Group", "group"),
             ("Current Search", "search"),
-            ("Current Selection", "selection"),
+            ("Checked Recipients", "selection"),
         ]:
             count = (count_by_scope or {}).get(value, 0)
             self.scope_combo.addItem(f"{label} ({count})", value)
