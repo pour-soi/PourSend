@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.dialogs import ExportDialog, ImportPreviewDialog, PasteListDialog, PersonDialog
+from app.dialogs import BatchEditDialog, ExportDialog, ImportPreviewDialog, PasteListDialog, PersonDialog
 from app.storage import load_recipient_data, save_recipient_data
 from core.exporting import (
     COPY_DIGITS,
@@ -45,7 +45,9 @@ from core.exporting import (
 from core.groups import (
     ALL_RECIPIENTS,
     assign_to_group,
+    batch_update_recipients,
     collect_groups,
+    count_duplicate_phone_numbers,
     create_group,
     DEFAULT_GROUP,
     delete_group,
@@ -74,6 +76,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PourSend")
         self.resize(1180, 700)
         self.recipients, self.groups, self.settings, load_error = load_recipient_data()
+        self.setAcceptDrops(True)
         self.recent_group = DEFAULT_GROUP
         self.last_imported_numbers: list[str] = []
         self._building_table = False
@@ -164,6 +167,7 @@ class MainWindow(QMainWindow):
         select_all = QPushButton("Select All in This Group")
         deselect_all = QPushButton("Deselect All in This Group")
         edit_button = QPushButton("Edit Recipient")
+        batch_edit_button = QPushButton("Batch Edit Checked")
         delete_button = QPushButton("Delete Recipient")
         undo_import_button = QPushButton("Undo Last Import")
         export_button = QPushButton("Export")
@@ -173,6 +177,7 @@ class MainWindow(QMainWindow):
         select_all.clicked.connect(lambda: self.set_all_visible(True))
         deselect_all.clicked.connect(lambda: self.set_all_visible(False))
         edit_button.clicked.connect(self.edit_selected)
+        batch_edit_button.clicked.connect(self.batch_edit_checked)
         delete_button.clicked.connect(self.delete_selected)
         undo_import_button.clicked.connect(self.undo_last_import)
         export_button.clicked.connect(self.export_recipients)
@@ -185,6 +190,7 @@ class MainWindow(QMainWindow):
             select_all,
             deselect_all,
             edit_button,
+            batch_edit_button,
             delete_button,
             undo_import_button,
             export_button,
@@ -243,7 +249,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.addAction(self._shortcut("Ctrl+N", self.add_person))
+        self.addAction(self._shortcut("Ctrl+V", self.paste_list))
         self.addAction(self._shortcut("Ctrl+F", lambda: self.search.setFocus()))
+        self.addAction(self._shortcut("Ctrl+A", lambda: self.set_all_visible(True)))
+        self.addAction(self._shortcut("Ctrl+Z", self.undo_last_import))
         self.addAction(self._shortcut("Delete", self.delete_selected))
 
     def _shortcut(self, keys: str, slot) -> QAction:
@@ -293,25 +302,27 @@ class MainWindow(QMainWindow):
         if self._building_groups:
             return
         query = self.search.text().strip().lower()
-        self._building_table = True
-        self.table.setRowCount(0)
-        for index in filtered_recipient_indexes(
+        indexes = filtered_recipient_indexes(
             self.recipients,
             self.current_group_filter(),
             query,
             self.current_phone_format(),
             self.sort_field_combo.currentData(),
             self.sort_direction_combo.currentData(),
-        ):
+        )
+        phone_format = self.current_phone_format()
+        self._building_table = True
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(indexes))
+        for row, index in enumerate(indexes):
             recipient = self.recipients[index]
-            row = self.table.rowCount()
-            self.table.insertRow(row)
             self.table.setVerticalHeaderItem(row, QTableWidgetItem(str(index)))
             checked = QTableWidgetItem("")
             checked.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
             checked.setCheckState(Qt.Checked if recipient.get("selected") else Qt.Unchecked)
             self.table.setItem(row, 0, checked)
-            phone_item = QTableWidgetItem(format_phone_number(recipient.get("phone", ""), self.current_phone_format()))
+            phone_item = QTableWidgetItem(format_phone_number(recipient.get("phone", ""), phone_format))
             phone_item.setToolTip(recipient.get("phone", ""))
             self.table.setItem(row, 1, phone_item)
             group_item = QTableWidgetItem(normalize_recipient_group(recipient, self.groups))
@@ -323,6 +334,8 @@ class MainWindow(QMainWindow):
             status_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             status_item.setToolTip(normalized or status)
             self.table.setItem(row, 4, status_item)
+        self.table.blockSignals(False)
+        self.table.setUpdatesEnabled(True)
         self._building_table = False
         self.update_counts()
 
@@ -426,6 +439,9 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self.import_file_path(path)
+
+    def import_file_path(self, path: str) -> None:
         try:
             preview_rows = preview_import_file(path, self.existing_normalized_numbers())
         except (OSError, ValueError) as exc:
@@ -448,6 +464,18 @@ class MainWindow(QMainWindow):
         self.show_import_result("Import file", added, duplicates, existing, invalid, dialog.invalid_examples())
         if added_numbers:
             self.last_imported_numbers = added_numbers
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path:
+                self.import_file_path(path)
+                event.acceptProposedAction()
+                return
 
     def add_import_rows(self, preview_rows, group: str) -> list[str]:
         added_numbers: list[str] = []
@@ -535,6 +563,24 @@ class MainWindow(QMainWindow):
         recipient["notes"] = notes
         self.recent_group = group
         self.save_and_update(selected_group=group)
+
+    def batch_edit_checked(self) -> None:
+        indexes = self.checked_visible_indexes()
+        if not indexes:
+            QMessageBox.information(self, "Batch edit", "Check one or more visible recipients first.")
+            return
+        dialog = BatchEditDialog(self, self.groups)
+        if dialog.exec() != BatchEditDialog.Accepted:
+            return
+        group, notes = dialog.values()
+        if group is None and notes is None:
+            QMessageBox.information(self, "Batch edit", "Choose a group or notes change.")
+            return
+        updated = batch_update_recipients(self.recipients, indexes, group=group, notes=notes)
+        if group:
+            self.recent_group = group
+        self.save_and_update(selected_group=self.current_group_filter())
+        QMessageBox.information(self, "Batch edit", f"Updated {updated} recipients.")
 
     def delete_selected(self) -> None:
         indexes = sorted({self._recipient_index(item.row()) for item in self.table.selectedItems() if self._recipient_index(item.row()) is not None}, reverse=True)
@@ -761,9 +807,15 @@ class MainWindow(QMainWindow):
         visible_indexes = self.checked_or_visible_indexes()
         visible_selected = sum(1 for index in visible_indexes if self.recipients[index].get("selected"))
         total_selected = sum(1 for recipient in self.recipients if recipient.get("selected"))
+        current_group = self.current_group_filter()
+        group_count = len(self.scope_selection(SCOPE_GROUP).recipients)
+        search_count = len(visible_indexes)
+        duplicates = count_duplicate_phone_numbers(self.recipients)
+        group_label = ALL_RECIPIENTS_LABEL if current_group == ALL_RECIPIENTS else current_group
         self.count_label.setText(
-            f"Visible selected: {visible_selected} | Total selected: {total_selected} | "
-            f"Visible: {len(visible_indexes)} | Total: {len(self.recipients)}"
+            f"Total recipients: {len(self.recipients)} | Current group ({group_label}): {group_count} | "
+            f"Current search: {search_count} | Duplicate count: {duplicates} | "
+            f"Visible selected: {visible_selected} | Total selected: {total_selected}"
         )
 
     def valid_group(self, group: str) -> str:

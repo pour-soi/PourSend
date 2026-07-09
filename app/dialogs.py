@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -48,6 +49,36 @@ class PersonDialog(QDialog):
 
     def values(self) -> tuple[str, str, str]:
         return self.phone_edit.text().strip(), self.group_combo.currentText().strip(), self.notes_edit.toPlainText().strip()
+
+
+class BatchEditDialog(QDialog):
+    def __init__(self, parent=None, groups: list[str] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Batch Edit")
+        self.change_group = QCheckBox("Change group")
+        self.group_combo = QComboBox()
+        for group in groups or []:
+            self.group_combo.addItem(group)
+        self.change_notes = QCheckBox("Replace notes")
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setFixedHeight(90)
+
+        form = QFormLayout()
+        form.addRow(self.change_group, self.group_combo)
+        form.addRow(self.change_notes, self.notes_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def values(self) -> tuple[str | None, str | None]:
+        group = self.group_combo.currentText().strip() if self.change_group.isChecked() else None
+        notes = self.notes_edit.toPlainText().strip() if self.change_notes.isChecked() else None
+        return group, notes
 
 
 class PasteListDialog(QDialog):

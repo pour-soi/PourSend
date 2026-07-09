@@ -8,7 +8,9 @@ from core.groups import (
     ALL_RECIPIENTS,
     DEFAULT_GROUP,
     assign_to_group,
+    batch_update_recipients,
     create_group,
+    count_duplicate_phone_numbers,
     delete_group,
     filtered_recipient_indexes,
     normalize_recipient_group,
@@ -345,6 +347,23 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(recipients[0]["group"], "Follow-up")
         self.assertEqual(recipients[2]["group"], "Follow-up")
         self.assertEqual(recipients[0]["notes"], "morning")
+
+    def test_batch_update_recipients_updates_group_and_notes(self):
+        recipients = sample_recipients()
+
+        updated = batch_update_recipients(recipients, [0, 2], group="Follow-up", notes="new note")
+
+        self.assertEqual(updated, 2)
+        self.assertEqual(recipients[0]["group"], "Follow-up")
+        self.assertEqual(recipients[2]["group"], "Follow-up")
+        self.assertEqual(recipients[0]["notes"], "new note")
+        self.assertEqual(recipients[2]["notes"], "new note")
+
+    def test_duplicate_phone_count_uses_normalized_identity(self):
+        recipients = sample_recipients()
+        recipients.append({"phone": normalized(), "group": "Caregivers", "notes": ""})
+
+        self.assertEqual(count_duplicate_phone_numbers(recipients), 1)
 
     def test_remove_from_group_moves_to_default(self):
         recipients = sample_recipients()

@@ -237,3 +237,39 @@ def set_selected(recipients: list[dict], indexes: Iterable[int], selected: bool)
     for index in indexes:
         if 0 <= index < len(recipients):
             recipients[index]["selected"] = selected
+
+
+def count_duplicate_phone_numbers(recipients: Iterable[dict]) -> int:
+    seen: set[str] = set()
+    duplicates = 0
+    for recipient in recipients:
+        key = recipient_phone_key(recipient)
+        if not key:
+            continue
+        if key in seen:
+            duplicates += 1
+        else:
+            seen.add(key)
+    return duplicates
+
+
+def batch_update_recipients(
+    recipients: list[dict],
+    indexes: Iterable[int],
+    *,
+    group: str | None = None,
+    notes: str | None = None,
+) -> int:
+    updated = 0
+    for index in indexes:
+        if not 0 <= index < len(recipients):
+            continue
+        if group is not None:
+            clean_group = group.strip()
+            if clean_group:
+                recipients[index]["group"] = clean_group
+                recipients[index]["groups"] = [clean_group]
+        if notes is not None:
+            recipients[index]["notes"] = notes.strip()
+        updated += 1
+    return updated
