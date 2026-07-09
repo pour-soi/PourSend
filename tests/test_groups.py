@@ -6,15 +6,20 @@ from pathlib import Path
 from app.storage import make_saved_data, parse_saved_data
 from core.groups import (
     ALL_RECIPIENTS,
-    UNASSIGNED,
+    DEFAULT_GROUP,
     assign_to_group,
     create_group,
     delete_group,
     filtered_recipient_indexes,
+    normalize_recipient_group,
+    normalize_recipients,
+    preferred_group,
     remove_from_group,
     rename_group,
     set_selected,
+    valid_group_or_default,
 )
+from core.importing import preview_pasted_recipients, rows_to_add
 from core.recipients import build_clipboard_output
 
 
@@ -28,74 +33,133 @@ def normalized(area: str = "415", exchange: str = "123", line: str = "4567") -> 
 
 def sample_recipients() -> list[dict]:
     return [
-        {"name": "Amy", "phone": raw_phone(), "selected": False, "groups": ["Caregivers"]},
-        {"name": "John", "phone": raw_phone("628"), "selected": False, "groups": ["Job Seekers"]},
-        {"name": "Mary", "phone": raw_phone("707"), "selected": False, "groups": []},
+        {"phone": raw_phone(), "selected": False, "group": "Caregivers", "notes": "morning"},
+        {"phone": raw_phone("628"), "selected": False, "group": "Job Seekers", "notes": ""},
+        {"phone": raw_phone("707"), "selected": False, "group": DEFAULT_GROUP, "notes": "follow up"},
     ]
 
 
 class GroupTests(unittest.TestCase):
-    def test_old_recipient_list_loads_as_unassigned(self):
+    def test_legacy_recipient_without_group_falls_back_to_default(self):
         old_data = [{"name": "Amy", "phone": raw_phone(), "selected": True}]
 
         recipients, groups = parse_saved_data(old_data)
 
-        self.assertEqual(groups, [])
+        self.assertEqual(groups, [DEFAULT_GROUP])
         self.assertEqual(recipients[0]["name"], "Amy")
-        self.assertEqual(recipients[0]["phone"], raw_phone())
+        self.assertEqual(recipients[0]["phone"], normalized())
         self.assertTrue(recipients[0]["selected"])
-        self.assertEqual(recipients[0]["groups"], [])
-        self.assertEqual(filtered_recipient_indexes(recipients, UNASSIGNED), [0])
+        self.assertEqual(recipients[0]["group"], DEFAULT_GROUP)
+        self.assertEqual(recipients[0]["groups"], [DEFAULT_GROUP])
 
-    def test_one_recipient_can_belong_to_multiple_groups(self):
-        recipients = [{"name": "Amy", "phone": raw_phone(), "selected": False, "groups": []}]
-        groups = ["Caregivers", "Follow-up"]
+    def test_legacy_recipient_name_is_not_required(self):
+        recipients, groups = parse_saved_data([{"phone": raw_phone(), "selected": False}])
 
-        assign_to_group(recipients, [0], groups[0])
-        assign_to_group(recipients, [0], groups[1])
+        self.assertEqual(groups, [DEFAULT_GROUP])
+        self.assertEqual(recipients[0]["phone"], normalized())
+        self.assertEqual(recipients[0]["group"], DEFAULT_GROUP)
 
-        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Follow-up"])
+    def test_legacy_group_membership_remains_accessible(self):
+        recipients, groups = parse_saved_data(
+            [{"name": "Amy", "phone": raw_phone(), "selected": False, "groups": ["Caregivers"]}]
+        )
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers"])
+        self.assertEqual(recipients[0]["group"], "Caregivers")
         self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [0])
-        self.assertEqual(filtered_recipient_indexes(recipients, "Follow-up"), [0])
 
-    def test_group_creation(self):
-        groups: list[str] = []
+    def test_missing_saved_group_falls_back_to_default(self):
+        data = {
+            "groups": ["Caregivers"],
+            "recipients": [{"phone": raw_phone(), "group": "Deleted Group", "selected": False}],
+        }
 
+        recipients, groups = parse_saved_data(data)
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers"])
+        self.assertEqual(recipients[0]["group"], DEFAULT_GROUP)
+
+    def test_phone_number_is_unique_identifier(self):
+        recipients = normalize_recipients(
+            [
+                {"phone": raw_phone(), "group": "Caregivers"},
+                {"phone": normalized(), "group": "Job Seekers"},
+            ],
+            ["Caregivers", "Job Seekers"],
+        )
+
+        self.assertEqual(len(recipients), 1)
+        self.assertEqual(recipients[0]["group"], "Caregivers")
+
+    def test_duplicate_phone_migration_merges_non_identity_fields(self):
+        recipients = normalize_recipients(
+            [
+                {"phone": raw_phone(), "group": "Caregivers", "selected": False, "notes": "first"},
+                {"phone": normalized(), "group": "Job Seekers", "selected": True, "notes": "second"},
+            ],
+            ["Caregivers", "Job Seekers"],
+        )
+
+        self.assertEqual(len(recipients), 1)
+        self.assertTrue(recipients[0]["selected"])
+        self.assertEqual(recipients[0]["notes"], "first\nsecond")
+
+    def test_notes_are_optional(self):
+        recipients = normalize_recipients([{"phone": raw_phone(), "group": DEFAULT_GROUP}], [DEFAULT_GROUP])
+
+        self.assertEqual(recipients[0]["notes"], "")
+
+    def test_group_creation_rejects_empty_and_duplicate_names(self):
+        groups = [DEFAULT_GROUP]
+
+        self.assertFalse(create_group(groups, " "))
         self.assertTrue(create_group(groups, "Caregivers"))
         self.assertFalse(create_group(groups, "Caregivers"))
 
-        self.assertEqual(groups, ["Caregivers"])
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers"])
 
     def test_group_rename_updates_memberships(self):
         recipients = sample_recipients()
-        groups = ["Caregivers", "Job Seekers"]
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
 
         self.assertTrue(rename_group(recipients, groups, "Caregivers", "Follow-up"))
 
-        self.assertEqual(groups, ["Follow-up", "Job Seekers"])
-        self.assertEqual(recipients[0]["groups"], ["Follow-up"])
+        self.assertEqual(groups, [DEFAULT_GROUP, "Follow-up", "Job Seekers"])
+        self.assertEqual(recipients[0]["group"], "Follow-up")
         self.assertEqual(filtered_recipient_indexes(recipients, "Follow-up"), [0])
 
-    def test_group_delete_does_not_delete_recipients(self):
+    def test_group_rename_rejects_default_empty_and_duplicate(self):
         recipients = sample_recipients()
-        groups = ["Caregivers", "Job Seekers"]
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
+
+        self.assertFalse(rename_group(recipients, groups, DEFAULT_GROUP, "Other"))
+        self.assertFalse(rename_group(recipients, groups, "Caregivers", ""))
+        self.assertFalse(rename_group(recipients, groups, "Caregivers", "Job Seekers"))
+
+    def test_group_delete_moves_recipients_to_default(self):
+        recipients = sample_recipients()
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
 
         self.assertTrue(delete_group(recipients, groups, "Caregivers"))
 
         self.assertEqual(len(recipients), 3)
-        self.assertEqual(groups, ["Job Seekers"])
-        self.assertEqual(recipients[0]["groups"], [])
-        self.assertEqual(filtered_recipient_indexes(recipients, UNASSIGNED), [0, 2])
+        self.assertEqual(groups, [DEFAULT_GROUP, "Job Seekers"])
+        self.assertEqual(recipients[0]["group"], DEFAULT_GROUP)
+        self.assertEqual(filtered_recipient_indexes(recipients, DEFAULT_GROUP), [0, 2])
 
-    def test_unassigned_filtering(self):
+    def test_default_group_cannot_be_deleted(self):
+        recipients = sample_recipients()
+        groups = [DEFAULT_GROUP, "Caregivers"]
+
+        self.assertFalse(delete_group(recipients, groups, DEFAULT_GROUP))
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers"])
+
+    def test_group_filtering(self):
         recipients = sample_recipients()
 
-        self.assertEqual(filtered_recipient_indexes(recipients, UNASSIGNED), [2])
-
-    def test_named_group_filtering(self):
-        recipients = sample_recipients()
-
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS), [0, 1, 2])
         self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [0])
+        self.assertEqual(filtered_recipient_indexes(recipients, DEFAULT_GROUP), [2])
 
     def test_select_all_in_group_affects_only_group(self):
         recipients = sample_recipients()
@@ -117,18 +181,17 @@ class GroupTests(unittest.TestCase):
         self.assertTrue(recipients[1]["selected"])
         self.assertTrue(recipients[2]["selected"])
 
-    def test_group_specific_search(self):
+    def test_group_specific_search_uses_phone_and_notes(self):
         recipients = sample_recipients()
 
-        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "Amy"), [0])
-        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers", "Amy"), [0])
-        self.assertEqual(filtered_recipient_indexes(recipients, "Job Seekers", "Amy"), [])
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "morning"), [0])
+        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers", "morning"), [0])
+        self.assertEqual(filtered_recipient_indexes(recipients, "Job Seekers", "morning"), [])
         self.assertEqual(filtered_recipient_indexes(recipients, "Job Seekers", "628"), [1])
 
     def test_group_persistence_round_trip(self):
         recipients = sample_recipients()
-        groups = ["Caregivers", "Job Seekers"]
-        recipients[0]["groups"].append("Job Seekers")
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "data.json"
@@ -137,26 +200,63 @@ class GroupTests(unittest.TestCase):
 
         restored_recipients, restored_groups = parse_saved_data(loaded)
 
-        self.assertEqual(restored_groups, ["Caregivers", "Job Seekers"])
-        self.assertEqual(restored_recipients[0]["groups"], ["Caregivers", "Job Seekers"])
+        self.assertEqual(restored_groups, [DEFAULT_GROUP, "Caregivers", "Job Seekers"])
+        self.assertEqual(restored_recipients[0]["group"], "Caregivers")
+        self.assertEqual(restored_recipients[0]["notes"], "morning")
 
     def test_deleted_group_stays_deleted_after_persistence(self):
         recipients = sample_recipients()
-        groups = ["Caregivers", "Job Seekers"]
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
         delete_group(recipients, groups, "Caregivers")
 
         restored_recipients, restored_groups = parse_saved_data(make_saved_data(recipients, groups))
 
-        self.assertEqual(restored_groups, ["Job Seekers"])
-        self.assertEqual(restored_recipients[0]["groups"], [])
+        self.assertEqual(restored_groups, [DEFAULT_GROUP, "Job Seekers"])
+        self.assertEqual(restored_recipients[0]["group"], DEFAULT_GROUP)
         self.assertEqual(len(restored_recipients), 3)
+
+    def test_batch_move_recipients(self):
+        recipients = sample_recipients()
+
+        assign_to_group(recipients, [0, 2], "Follow-up")
+
+        self.assertEqual(recipients[0]["group"], "Follow-up")
+        self.assertEqual(recipients[2]["group"], "Follow-up")
+        self.assertEqual(recipients[0]["notes"], "morning")
+
+    def test_remove_from_group_moves_to_default(self):
+        recipients = sample_recipients()
+
+        remove_from_group(recipients, [0], "Caregivers")
+
+        self.assertEqual(normalize_recipient_group(recipients[0]), DEFAULT_GROUP)
+        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [])
+
+    def test_invalid_filter_state_recovers_after_group_deletion(self):
+        recipients = sample_recipients()
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
+
+        delete_group(recipients, groups, "Caregivers")
+
+        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [])
+        self.assertEqual(filtered_recipient_indexes(recipients, DEFAULT_GROUP), [0, 2])
+
+    def test_recently_used_group_prefers_current_then_recent(self):
+        groups = [DEFAULT_GROUP, "Caregivers", "Follow-up"]
+
+        self.assertEqual(preferred_group("Caregivers", "Follow-up", groups), "Caregivers")
+        self.assertEqual(preferred_group(None, "Follow-up", groups), "Follow-up")
+
+    def test_missing_recently_used_group_falls_back_to_default(self):
+        groups = [DEFAULT_GROUP, "Caregivers"]
+
+        self.assertEqual(preferred_group(None, "Deleted", groups), DEFAULT_GROUP)
+        self.assertEqual(valid_group_or_default("Deleted", groups), DEFAULT_GROUP)
 
     def test_copy_behavior_after_group_selection(self):
         recipients = sample_recipients()
-        recipients.append(
-            {"name": "Duplicate Amy", "phone": normalized(), "selected": False, "groups": ["Caregivers"]}
-        )
-        recipients.append({"name": "Invalid", "phone": "12345", "selected": False, "groups": ["Caregivers"]})
+        recipients.append({"phone": normalized(), "selected": False, "group": "Caregivers", "notes": ""})
+        recipients.append({"phone": "12345", "selected": False, "group": "Caregivers", "notes": ""})
 
         set_selected(recipients, filtered_recipient_indexes(recipients, "Caregivers"), True)
         result = build_clipboard_output(recipients, "comma")
@@ -167,13 +267,21 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(result.invalid_skipped, 1)
         self.assertEqual(result.output, normalized())
 
-    def test_remove_selected_from_group(self):
-        recipients = sample_recipients()
+    def test_imported_recipients_receive_selected_group(self):
+        rows = preview_pasted_recipients(f"Amy {raw_phone()}\nJohn {raw_phone('628')}")
+        recipients = rows_to_add(rows, "Caregivers")
 
-        remove_from_group(recipients, [0], "Caregivers")
+        self.assertEqual([recipient["group"] for recipient in recipients], ["Caregivers", "Caregivers"])
+        self.assertNotIn("name", recipients[0])
 
-        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [])
-        self.assertEqual(filtered_recipient_indexes(recipients, UNASSIGNED), [0, 2])
+    def test_import_with_missing_group_falls_back_to_default_on_save(self):
+        rows = preview_pasted_recipients(raw_phone())
+        saved = make_saved_data(rows_to_add(rows, ""), [])
+
+        recipients, groups = parse_saved_data(saved)
+
+        self.assertEqual(groups, [DEFAULT_GROUP])
+        self.assertEqual(recipients[0]["group"], DEFAULT_GROUP)
 
 
 if __name__ == "__main__":

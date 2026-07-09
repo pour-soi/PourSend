@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
+from .groups import DEFAULT_GROUP
 from .phone import normalize_us_phone
 
 
@@ -52,7 +53,7 @@ def parse_pasted_list(text: str) -> tuple[list[ParsedRecipient], list[RejectedRo
 
         parsed = _parse_line(source)
         if parsed is None:
-            rejected.append(RejectedRow(source=f"Line {line_number}: {source}", reason="Could not detect name and phone number"))
+            rejected.append(RejectedRow(source=f"Line {line_number}: {source}", reason="Could not detect phone number"))
         else:
             accepted.append(ParsedRecipient(parsed[0], parsed[1], source=f"Line {line_number}"))
 
@@ -92,10 +93,16 @@ def preview_pasted_recipients(text: str, existing_numbers: set[str] | None = Non
     return rows
 
 
-def rows_to_add(rows: list[PastePreviewRow], groups: list[str] | None = None) -> list[dict]:
-    memberships = list(groups or [])
+def rows_to_add(rows: list[PastePreviewRow], group: str = DEFAULT_GROUP) -> list[dict]:
+    clean_group = group.strip() or DEFAULT_GROUP
     return [
-        {"name": row.name, "phone": row.normalized, "selected": False, "groups": memberships.copy()}
+        {
+            "phone": row.normalized,
+            "selected": False,
+            "group": clean_group,
+            "groups": [clean_group],
+            "notes": "",
+        }
         for row in rows
         if row.status == "Valid"
     ]
@@ -140,8 +147,6 @@ def _parse_line(line: str) -> tuple[str, str] | None:
 
     phone = match.group("phone").strip()
     name = line[: match.start("phone")].strip()
-    if not name:
-        return None
     return name, phone
 
 
@@ -281,8 +286,8 @@ def read_csv_recipients(
         for row_number, row in enumerate(reader, start=2):
             name = (row.get(name_column) or "").strip()
             phone = (row.get(phone_column) or "").strip()
-            if not name or not phone:
-                rejected.append(RejectedRow(source=f"CSV row {row_number}", reason="Missing name or phone number"))
+            if not phone:
+                rejected.append(RejectedRow(source=f"CSV row {row_number}", reason="Missing phone number"))
                 continue
             accepted.append(ParsedRecipient(name=name, phone=phone, source=f"CSV row {row_number}"))
 

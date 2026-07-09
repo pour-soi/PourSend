@@ -5,11 +5,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -22,23 +19,24 @@ from core.importing import PastePreviewRow, preview_pasted_recipients
 
 
 class PersonDialog(QDialog):
-    def __init__(self, parent=None, name: str = "", phone: str = "", groups: list[str] | None = None, selected_groups: list[str] | None = None):
+    def __init__(self, parent=None, phone: str = "", groups: list[str] | None = None, selected_group: str = "", notes: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Person")
-        self.name_edit = QLineEdit(name)
+        self.setWindowTitle("Recipient")
         self.phone_edit = QLineEdit(phone)
-        self.groups_list = QListWidget()
-        selected = set(selected_groups or [])
+        self.group_combo = QComboBox()
         for group in groups or []:
-            item = QListWidgetItem(group)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if group in selected else Qt.Unchecked)
-            self.groups_list.addItem(item)
+            self.group_combo.addItem(group)
+        if selected_group:
+            index = self.group_combo.findText(selected_group)
+            if index >= 0:
+                self.group_combo.setCurrentIndex(index)
+        self.notes_edit = QTextEdit(notes)
+        self.notes_edit.setFixedHeight(90)
 
         form = QFormLayout()
-        form.addRow("Name", self.name_edit)
         form.addRow("Phone number", self.phone_edit)
-        form.addRow("Groups", self.groups_list)
+        form.addRow("Group", self.group_combo)
+        form.addRow("Notes", self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -48,13 +46,8 @@ class PersonDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
-    def values(self) -> tuple[str, str, list[str]]:
-        selected_groups = []
-        for index in range(self.groups_list.count()):
-            item = self.groups_list.item(index)
-            if item.checkState() == Qt.Checked:
-                selected_groups.append(item.text())
-        return self.name_edit.text().strip(), self.phone_edit.text().strip(), selected_groups
+    def values(self) -> tuple[str, str, str]:
+        return self.phone_edit.text().strip(), self.group_combo.currentText().strip(), self.notes_edit.toPlainText().strip()
 
 
 class PasteListDialog(QDialog):
@@ -67,15 +60,12 @@ class PasteListDialog(QDialog):
 
         self.input = QTextEdit()
         self.input.setPlaceholderText("Name, phone number\nName    phone number")
-        self.preview = QTableWidget(0, 4)
-        self.preview.setHorizontalHeaderLabels(["Original", "Name", "Normalized", "Status"])
+        self.preview = QTableWidget(0, 3)
+        self.preview.setHorizontalHeaderLabels(["Original", "Normalized", "Status"])
         self.status = QLabel("Paste a list, then preview it before importing.")
-        self.groups_list = QListWidget()
+        self.group_combo = QComboBox()
         for group in groups or []:
-            item = QListWidgetItem(group)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
-            self.groups_list.addItem(item)
+            self.group_combo.addItem(group)
 
         preview_button = QPushButton("Preview")
         preview_button.clicked.connect(self.refresh_preview)
@@ -89,8 +79,8 @@ class PasteListDialog(QDialog):
         layout.addWidget(self.input)
         layout.addWidget(preview_button)
         layout.addWidget(self.preview)
-        layout.addWidget(QLabel("Optional groups for new recipients"))
-        layout.addWidget(self.groups_list)
+        layout.addWidget(QLabel("Group for new recipients"))
+        layout.addWidget(self.group_combo)
         layout.addWidget(self.status)
         layout.addWidget(buttons)
 
@@ -102,7 +92,6 @@ class PasteListDialog(QDialog):
             self.preview.insertRow(row)
             for column, value in enumerate([
                 row_data.phone,
-                row_data.name,
                 row_data.normalized or "-",
                 row_data.status,
             ]):
@@ -127,13 +116,8 @@ class PasteListDialog(QDialog):
     def rows_to_add(self) -> list[PastePreviewRow]:
         return [row for row in self.preview_rows if row.status == "Valid"]
 
-    def selected_groups(self) -> list[str]:
-        groups = []
-        for index in range(self.groups_list.count()):
-            item = self.groups_list.item(index)
-            if item.checkState() == Qt.Checked:
-                groups.append(item.text())
-        return groups
+    def selected_group(self) -> str:
+        return self.group_combo.currentText().strip()
 
     def summary_counts(self) -> tuple[int, int, int, int]:
         return (

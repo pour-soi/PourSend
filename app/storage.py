@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from core.groups import collect_groups, normalize_group_names, normalize_recipients
+from core.groups import collect_groups, ensure_default_group, normalize_group_names, normalize_recipients
 
 
 APP_FOLDER = "ringcentral_recipient_prep_data"
@@ -31,21 +31,25 @@ def data_path() -> Path:
 
 def parse_saved_data(data) -> tuple[list[dict], list[str]]:
     if isinstance(data, list):
-        recipients = normalize_recipients(data)
+        groups = collect_groups(data)
+        recipients = normalize_recipients(data, groups)
         return recipients, collect_groups(recipients)
 
     if isinstance(data, dict):
-        recipients = normalize_recipients(data.get("recipients", []))
-        groups = normalize_group_names(data.get("groups", []))
+        raw_recipients = data.get("recipients", [])
+        saved_groups = normalize_group_names(data.get("groups", []))
+        groups = ensure_default_group(saved_groups or collect_groups(raw_recipients))
+        recipients = normalize_recipients(raw_recipients, groups)
         return recipients, collect_groups(recipients, groups)
 
     raise ValueError("unexpected format")
 
 
 def make_saved_data(recipients: list[dict], groups: list[str]) -> dict:
-    normalized_recipients = normalize_recipients(recipients)
+    groups = ensure_default_group(groups)
+    normalized_recipients = normalize_recipients(recipients, groups)
     return {
-        "version": 2,
+        "version": 3,
         "groups": collect_groups(normalized_recipients, groups),
         "recipients": normalized_recipients,
     }

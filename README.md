@@ -21,23 +21,22 @@ Copy many phone numbers -> Paste List -> Review preview -> Add All Recipients ->
 ## Features
 
 - Add, edit, and delete recipients.
-- Search by name or phone number.
+- Search by phone number or notes.
 - Organize recipients into groups.
-- Assign one recipient to multiple groups.
+- Move recipients between groups.
 - View `All Recipients`.
-- View `Unassigned` recipients.
 - Search within the currently selected group.
 - Select all visible recipients with `Select All in This Group`.
 - Deselect all visible recipients with `Deselect All in This Group`.
 - Import through `Paste List`.
 - Paste phone-only batches.
-- Paste name + phone rows.
-- Import CSV files with common name and phone column names.
-- Assign a pasted batch to one or more existing groups.
+- Paste phone numbers from name + phone rows while ignoring names for saved recipients.
+- Import TXT, CSV, and XLSX files with supported phone-number formats.
+- Assign a pasted batch to one existing group.
 - Detect duplicates inside a pasted batch.
 - Detect phone numbers that already exist.
 - Detect invalid phone numbers before import.
-- Use `None` as the default name for unnamed imported numbers.
+- Store optional notes for recipients.
 - Save recipients and groups locally between launches.
 - Export a backup.
 - Clear all data with confirmation.
@@ -51,9 +50,9 @@ Copy many phone numbers -> Paste List -> Review preview -> Add All Recipients ->
 
 ## Batch Import Behavior
 
-Each valid phone number in a pasted batch becomes a separate recipient.
+Each valid phone number in a pasted batch becomes a separate recipient unless that normalized phone number already exists.
 
-Unnamed numbers use `None` as the visible recipient name. You can rename those recipients later with the existing edit workflow.
+Names and surrounding labels in pasted or imported text are used only to help detect phone numbers. They are not saved as recipient identity.
 
 During preview and import:
 
@@ -61,14 +60,14 @@ During preview and import:
 - Phone numbers that already exist in the recipient list are skipped.
 - Invalid phone numbers are skipped.
 - Existing recipients are never overwritten.
-- Existing names and group memberships are never silently modified.
-- Only newly added recipients receive optional batch group assignments.
+- Existing legacy names are preserved for compatibility, but new recipient workflows do not require names.
+- Only newly added recipients receive the selected batch group.
 
 ## Groups
 
-A recipient may belong to more than one group.
+A recipient belongs to one group. Records without a valid group fall back to `Default`.
 
-Deleting a group does not delete the recipients inside it. It only removes that group membership.
+Deleting a group does not delete the recipients inside it. It moves those recipients to `Default`.
 
 You can open a group, search within that group, then select or deselect only the visible recipients in that group.
 
@@ -133,7 +132,7 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 37 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, and batch phone-number import.
+The current suite has 69 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, and batch phone-number import.
 
 ## Data Location
 

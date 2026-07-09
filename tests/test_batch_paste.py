@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 from app.storage import make_saved_data, parse_saved_data
+from core.groups import DEFAULT_GROUP
 from core.importing import normalized_numbers_from_text, preview_import_file, preview_pasted_recipients, rows_to_add
 
 
@@ -47,12 +48,13 @@ class BatchPasteTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].normalized, normalized())
 
-    def test_default_name_is_none_and_every_number_becomes_separate_recipient(self):
+    def test_phone_only_import_creates_phone_recipients(self):
         rows = preview_pasted_recipients(f"{raw_phone()}\n{raw_phone('628')}")
         recipients = rows_to_add(rows)
 
-        self.assertEqual([recipient["name"] for recipient in recipients], ["None", "None"])
         self.assertEqual([recipient["phone"] for recipient in recipients], [normalized(), normalized("628")])
+        self.assertEqual([recipient["group"] for recipient in recipients], [DEFAULT_GROUP, DEFAULT_GROUP])
+        self.assertEqual([recipient["notes"] for recipient in recipients], ["", ""])
 
     def test_duplicate_inside_same_batch_is_skipped(self):
         rows = preview_pasted_recipients(f"{raw_phone()}\n{normalized()}")
@@ -75,20 +77,21 @@ class BatchPasteTests(unittest.TestCase):
 
     def test_optional_group_assignment(self):
         rows = preview_pasted_recipients(raw_phone())
-        recipients = rows_to_add(rows, ["Caregivers"])
+        recipients = rows_to_add(rows, "Caregivers")
 
+        self.assertEqual(recipients[0]["group"], "Caregivers")
         self.assertEqual(recipients[0]["groups"], ["Caregivers"])
 
-    def test_assignment_to_multiple_groups(self):
+    def test_import_uses_one_selected_group(self):
         rows = preview_pasted_recipients(raw_phone())
-        recipients = rows_to_add(rows, ["Caregivers", "Follow-up"])
+        recipients = rows_to_add(rows, "Caregivers")
 
-        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Follow-up"])
+        self.assertEqual(recipients[0]["groups"], ["Caregivers"])
 
     def test_existing_recipient_groups_remain_unchanged_when_number_already_exists(self):
         existing = [{"name": "Amy", "phone": raw_phone(), "selected": False, "groups": ["Caregivers"]}]
         rows = preview_pasted_recipients(raw_phone(), {normalized()})
-        existing.extend(rows_to_add(rows, ["Follow-up"]))
+        existing.extend(rows_to_add(rows, "Follow-up"))
 
         self.assertEqual(existing, [
             {"name": "Amy", "phone": raw_phone(), "selected": False, "groups": ["Caregivers"]}
@@ -96,13 +99,13 @@ class BatchPasteTests(unittest.TestCase):
 
     def test_persistence_after_batch_import(self):
         rows = preview_pasted_recipients(f"{raw_phone()}\n{raw_phone('628')}")
-        recipients = rows_to_add(rows, ["Caregivers"])
+        recipients = rows_to_add(rows, "Caregivers")
         saved = make_saved_data(recipients, ["Caregivers"])
 
         restored_recipients, restored_groups = parse_saved_data(saved)
 
-        self.assertEqual(restored_groups, ["Caregivers"])
-        self.assertEqual([recipient["name"] for recipient in restored_recipients], ["None", "None"])
+        self.assertEqual(restored_groups, [DEFAULT_GROUP, "Caregivers"])
+        self.assertEqual([recipient["phone"] for recipient in restored_recipients], [normalized(), normalized("628")])
         self.assertEqual([recipient["groups"] for recipient in restored_recipients], [["Caregivers"], ["Caregivers"]])
 
     def test_strict_old_name_phone_format_still_works(self):
@@ -133,11 +136,14 @@ class BatchPasteTests(unittest.TestCase):
 
     def test_pasted_names_and_phone_numbers_are_extracted(self):
         rows = preview_pasted_recipients(f"Amy {raw_phone()}\nJohn\t{raw_phone('628')}")
+        recipients = rows_to_add(rows, "Caregivers")
 
         self.assertEqual([(row.name, row.normalized) for row in rows], [
             ("Amy", normalized()),
             ("John", normalized("628")),
         ])
+        self.assertNotIn("name", recipients[0])
+        self.assertEqual([recipient["phone"] for recipient in recipients], [normalized(), normalized("628")])
 
     def test_duplicate_numbers_in_different_formats_are_detected(self):
         rows = preview_pasted_recipients(

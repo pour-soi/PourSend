@@ -28,16 +28,18 @@ from app.dialogs import PasteListDialog, PersonDialog
 from app.storage import load_recipient_data, make_saved_data, save_recipient_data
 from core.groups import (
     ALL_RECIPIENTS,
-    UNASSIGNED,
     assign_to_group,
     collect_groups,
     create_group,
+    DEFAULT_GROUP,
     delete_group,
     filtered_recipient_indexes,
-    normalize_recipient_groups,
-    remove_from_group,
+    normalize_recipient_group,
+    preferred_group,
+    recipient_phone_key,
     rename_group,
     set_selected,
+    valid_group_or_default,
 )
 from core.importing import preview_import_file, rows_to_add
 from core.phone import normalize_us_phone
@@ -45,7 +47,6 @@ from core.recipients import build_clipboard_output
 
 
 ALL_RECIPIENTS_LABEL = "All Recipients"
-UNASSIGNED_LABEL = "Unassigned"
 
 
 class MainWindow(QMainWindow):
@@ -54,6 +55,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PourSend")
         self.resize(1180, 700)
         self.recipients, self.groups, load_error = load_recipient_data()
+        self.recent_group = DEFAULT_GROUP
         self._building_table = False
         self._building_groups = False
         self._build_ui()
@@ -67,10 +69,10 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 22px; font-weight: 600;")
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search by name or phone number")
+        self.search.setPlaceholderText("Search by phone number or notes")
         self.search.textChanged.connect(self.refresh_table)
 
-        add_button = QPushButton("Add Person")
+        add_button = QPushButton("Add Recipient")
         paste_button = QPushButton("Paste List")
         import_button = QPushButton("Import File")
         add_button.clicked.connect(self.add_person)
@@ -84,8 +86,8 @@ class MainWindow(QMainWindow):
         new_group_button = QPushButton("New Group")
         rename_group_button = QPushButton("Rename Group")
         delete_group_button = QPushButton("Delete Group")
-        assign_group_button = QPushButton("Assign Checked")
-        remove_group_button = QPushButton("Remove Checked")
+        assign_group_button = QPushButton("Move Checked")
+        remove_group_button = QPushButton("Move Checked to Default")
         new_group_button.clicked.connect(self.create_group)
         rename_group_button.clicked.connect(self.rename_group)
         delete_group_button.clicked.connect(self.delete_group)
@@ -112,23 +114,23 @@ class MainWindow(QMainWindow):
         top.addWidget(import_button)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Select", "Name", "Phone number", "Normalized", "Status"])
+        self.table.setHorizontalHeaderLabels(["Select", "Phone number", "Group", "Notes", "Status"])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
         header.setSectionResizeMode(2, QHeaderView.Interactive)
         header.setSectionResizeMode(3, QHeaderView.Interactive)
         header.setSectionResizeMode(4, QHeaderView.Stretch)
-        self.table.setColumnWidth(1, 210)
-        self.table.setColumnWidth(2, 190)
-        self.table.setColumnWidth(3, 190)
+        self.table.setColumnWidth(1, 190)
+        self.table.setColumnWidth(2, 170)
+        self.table.setColumnWidth(3, 260)
         self.table.itemChanged.connect(self.table_item_changed)
         self.table.itemDoubleClicked.connect(lambda _item: self.edit_selected())
 
         select_all = QPushButton("Select All in This Group")
         deselect_all = QPushButton("Deselect All in This Group")
-        edit_button = QPushButton("Edit Person")
-        delete_button = QPushButton("Delete Person")
+        edit_button = QPushButton("Edit Recipient")
+        delete_button = QPushButton("Delete Recipient")
         export_button = QPushButton("Export Backup")
         clear_button = QPushButton("Clear All Data")
         select_all.clicked.connect(lambda: self.set_all_visible(True))
@@ -192,16 +194,19 @@ class MainWindow(QMainWindow):
 
     def current_named_group(self) -> str | None:
         group = self.current_group_filter()
-        if group in {ALL_RECIPIENTS, UNASSIGNED}:
+        if group == ALL_RECIPIENTS:
             return None
         return group
+
+    def preferred_group(self) -> str:
+        return preferred_group(self.current_named_group(), self.recent_group, self.groups)
 
     def refresh_group_list(self, selected_group: str | None = None) -> None:
         current = selected_group or self.current_group_filter()
         self.groups = collect_groups(self.recipients, self.groups)
         self._building_groups = True
         self.group_list.clear()
-        for label, value in [(ALL_RECIPIENTS_LABEL, ALL_RECIPIENTS), (UNASSIGNED_LABEL, UNASSIGNED)]:
+        for label, value in [(ALL_RECIPIENTS_LABEL, ALL_RECIPIENTS)]:
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, value)
             self.group_list.addItem(item)
@@ -233,16 +238,15 @@ class MainWindow(QMainWindow):
             checked.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
             checked.setCheckState(Qt.Checked if recipient.get("selected") else Qt.Unchecked)
             self.table.setItem(row, 0, checked)
-            self.table.setItem(row, 1, QTableWidgetItem(recipient.get("name", "")))
-            self.table.setItem(row, 2, QTableWidgetItem(recipient.get("phone", "")))
+            self.table.setItem(row, 1, QTableWidgetItem(recipient.get("phone", "")))
+            group_item = QTableWidgetItem(normalize_recipient_group(recipient, self.groups))
+            group_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.table.setItem(row, 2, group_item)
+            self.table.setItem(row, 3, QTableWidgetItem(recipient.get("notes", "")))
             normalized, status = normalize_us_phone(recipient.get("phone", ""))
-            normalized_item = QTableWidgetItem(normalized)
-            normalized_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            normalized_item.setToolTip(normalized)
-            self.table.setItem(row, 3, normalized_item)
             status_item = QTableWidgetItem(status)
             status_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            status_item.setToolTip(status)
+            status_item.setToolTip(normalized or status)
             self.table.setItem(row, 4, status_item)
         self._building_table = False
         self.update_counts()
@@ -256,10 +260,24 @@ class MainWindow(QMainWindow):
         if item.column() == 0:
             self.recipients[index]["selected"] = item.checkState() == Qt.Checked
         elif item.column() == 1:
-            self.recipients[index]["name"] = item.text().strip()
-        elif item.column() == 2:
-            self.recipients[index]["phone"] = item.text().strip()
+            phone = item.text().strip()
+            normalized, status = normalize_us_phone(phone)
+            if status == "Valid":
+                key = normalized
+                duplicate = any(
+                    other_index != index and recipient_phone_key(recipient) == key
+                    for other_index, recipient in enumerate(self.recipients)
+                )
+                if duplicate:
+                    QMessageBox.warning(self, "Edit recipient", "That phone number already exists.")
+                    self.refresh_table()
+                    return
+                self.recipients[index]["phone"] = normalized
+            else:
+                self.recipients[index]["phone"] = phone
             self.refresh_table()
+        elif item.column() == 3:
+            self.recipients[index]["notes"] = item.text().strip()
         self.save_and_update()
 
     def _recipient_index(self, visible_row: int) -> int | None:
@@ -284,24 +302,31 @@ class MainWindow(QMainWindow):
         return indexes
 
     def add_person(self) -> None:
-        dialog = PersonDialog(self, groups=self.groups)
+        dialog = PersonDialog(self, groups=self.groups, selected_group=self.preferred_group())
         if dialog.exec() != PersonDialog.Accepted:
             return
-        name, phone, groups = dialog.values()
-        if not name or not phone:
-            QMessageBox.warning(self, "Add person", "Enter both a name and phone number.")
+        phone, group, notes = dialog.values()
+        normalized, status = normalize_us_phone(phone)
+        if status != "Valid":
+            QMessageBox.warning(self, "Add recipient", status)
             return
-        self.recipients.append({"name": name, "phone": phone, "selected": False, "groups": groups})
-        self.save_and_update()
+        if normalized in self.existing_normalized_numbers():
+            QMessageBox.warning(self, "Add recipient", "That phone number already exists.")
+            return
+        group = self.valid_group(group)
+        self.recipients.append({"phone": normalized, "selected": False, "group": group, "groups": [group], "notes": notes})
+        self.recent_group = group
+        self.save_and_update(selected_group=group)
 
     def paste_list(self) -> None:
         dialog = PasteListDialog(self, self.existing_normalized_numbers(), self.groups)
         if dialog.exec() != PasteListDialog.Accepted:
             return
-        groups = dialog.selected_groups()
-        for recipient in rows_to_add(dialog.rows_to_add(), groups):
+        group = self.valid_group(dialog.selected_group())
+        for recipient in rows_to_add(dialog.rows_to_add(), group):
             self.recipients.append(recipient)
-        self.save_and_update()
+        self.recent_group = group
+        self.save_and_update(selected_group=group)
         added, duplicates, existing, invalid = dialog.summary_counts()
         extracted = added + duplicates + existing + invalid
         invalid_examples = dialog.invalid_examples()
@@ -341,13 +366,15 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Import file", f"The file could not be imported: {exc}")
             return
-        recipients = rows_to_add(preview_rows)
+        group = self.preferred_group()
+        recipients = rows_to_add(preview_rows, group)
         if not recipients:
             QMessageBox.warning(self, "Import file", "No new valid phone numbers were found in the file.")
             return
         for recipient in recipients:
             self.recipients.append(recipient)
-        self.save_and_update()
+        self.recent_group = group
+        self.save_and_update(selected_group=group)
         added = len(recipients)
         duplicates = sum(1 for row in preview_rows if row.status == "Duplicate in this batch")
         existing = sum(1 for row in preview_rows if row.status == "Already exists")
@@ -369,21 +396,28 @@ class MainWindow(QMainWindow):
         recipient = self.recipients[index]
         dialog = PersonDialog(
             self,
-            recipient.get("name", ""),
             recipient.get("phone", ""),
             self.groups,
-            normalize_recipient_groups(recipient),
+            normalize_recipient_group(recipient, self.groups),
+            recipient.get("notes", ""),
         )
         if dialog.exec() != PersonDialog.Accepted:
             return
-        name, phone, groups = dialog.values()
-        if not name or not phone:
-            QMessageBox.warning(self, "Edit person", "Enter both a name and phone number.")
+        phone, group, notes = dialog.values()
+        normalized, status = normalize_us_phone(phone)
+        if status != "Valid":
+            QMessageBox.warning(self, "Edit recipient", status)
             return
-        recipient["name"] = name
-        recipient["phone"] = phone
-        recipient["groups"] = groups
-        self.save_and_update()
+        if any(other_index != index and recipient_phone_key(other) == normalized for other_index, other in enumerate(self.recipients)):
+            QMessageBox.warning(self, "Edit recipient", "That phone number already exists.")
+            return
+        group = self.valid_group(group)
+        recipient["phone"] = normalized
+        recipient["group"] = group
+        recipient["groups"] = [group]
+        recipient["notes"] = notes
+        self.recent_group = group
+        self.save_and_update(selected_group=group)
 
     def delete_selected(self) -> None:
         indexes = sorted({self._recipient_index(item.row()) for item in self.table.selectedItems() if self._recipient_index(item.row()) is not None}, reverse=True)
@@ -391,7 +425,7 @@ class MainWindow(QMainWindow):
             index = self.selected_visible_index()
             indexes = [] if index is None else [index]
         if not indexes:
-            QMessageBox.information(self, "Delete person", "Select one or more people to delete.")
+            QMessageBox.information(self, "Delete recipient", "Select one or more recipients to delete.")
             return
         for index in indexes:
             del self.recipients[index]
@@ -420,7 +454,7 @@ class MainWindow(QMainWindow):
 
     def rename_group(self) -> None:
         group = self.current_named_group()
-        if group is None:
+        if group is None or group == DEFAULT_GROUP:
             QMessageBox.information(self, "Rename group", "Select a user-created group to rename.")
             return
         name, ok = QInputDialog.getText(self, "Rename group", "Group name", text=group)
@@ -433,7 +467,7 @@ class MainWindow(QMainWindow):
 
     def delete_group(self) -> None:
         group = self.current_named_group()
-        if group is None:
+        if group is None or group == DEFAULT_GROUP:
             QMessageBox.information(self, "Delete group", "Select a user-created group to delete.")
             return
         answer = QMessageBox.question(self, "Delete group", f"Delete group '{group}'? Recipients will not be deleted.")
@@ -445,28 +479,26 @@ class MainWindow(QMainWindow):
     def assign_checked_to_group(self) -> None:
         indexes = self.checked_visible_indexes()
         if not indexes:
-            QMessageBox.information(self, "Assign to group", "Check one or more visible recipients first.")
+            QMessageBox.information(self, "Move to group", "Check one or more visible recipients first.")
             return
         if not self.groups:
-            QMessageBox.information(self, "Assign to group", "Create a group first.")
+            QMessageBox.information(self, "Move to group", "Create a group first.")
             return
-        group, ok = QInputDialog.getItem(self, "Assign to group", "Group", self.groups, 0, False)
+        group, ok = QInputDialog.getItem(self, "Move to group", "Group", self.groups, 0, False)
         if not ok:
             return
         assign_to_group(self.recipients, indexes, group)
+        self.recent_group = group
         self.save_and_update(selected_group=self.current_group_filter())
 
     def remove_checked_from_current_group(self) -> None:
-        group = self.current_named_group()
-        if group is None:
-            QMessageBox.information(self, "Remove from group", "Open a user-created group first.")
-            return
         indexes = self.checked_visible_indexes()
         if not indexes:
-            QMessageBox.information(self, "Remove from group", "Check one or more visible recipients first.")
+            QMessageBox.information(self, "Move to default", "Check one or more visible recipients first.")
             return
-        remove_from_group(self.recipients, indexes, group)
-        self.save_and_update(selected_group=group)
+        assign_to_group(self.recipients, indexes, DEFAULT_GROUP)
+        self.recent_group = DEFAULT_GROUP
+        self.save_and_update(selected_group=DEFAULT_GROUP)
 
     def copy_selected(self) -> None:
         result = build_clipboard_output(self.recipients, self.format_combo.currentData())
@@ -511,6 +543,8 @@ class MainWindow(QMainWindow):
 
     def save_and_update(self, selected_group: str | None = None) -> None:
         self.groups = collect_groups(self.recipients, self.groups)
+        if self.recent_group not in self.groups:
+            self.recent_group = DEFAULT_GROUP
         error = save_recipient_data(self.recipients, self.groups)
         self.refresh_group_list(selected_group)
         self.refresh_table()
@@ -525,6 +559,9 @@ class MainWindow(QMainWindow):
             f"Visible selected: {visible_selected} | Total selected: {total_selected} | "
             f"Visible: {len(visible_indexes)} | Total: {len(self.recipients)}"
         )
+
+    def valid_group(self, group: str) -> str:
+        return valid_group_or_default(group, self.groups)
 
 
 def save_recipients_to_path(recipients: list[dict], groups: list[str], path: str) -> str | None:

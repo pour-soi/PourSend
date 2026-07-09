@@ -71,6 +71,7 @@ class ClipboardOutputTests(unittest.TestCase):
 class ImportingTests(unittest.TestCase):
     def test_pasted_list_parses_common_formats(self):
         accepted, rejected = parse_pasted_list(
+            f"{raw_phone('510')}\n"
             f"Amy, {raw_phone()}\n"
             f"John, {parenthesized('628')}\n"
             f"Mary    {raw_phone(separator='.')}\n"
@@ -78,6 +79,7 @@ class ImportingTests(unittest.TestCase):
         )
 
         self.assertEqual([(row.name, row.phone) for row in accepted], [
+            ("", raw_phone("510")),
             ("Amy", raw_phone()),
             ("John", parenthesized("628")),
             ("Mary", raw_phone(separator=".")),
@@ -88,14 +90,14 @@ class ImportingTests(unittest.TestCase):
         self.assertEqual(detect_csv_columns(["full_name", "mobile"]), ("full_name", "mobile"))
         self.assertEqual(detect_csv_columns(["Contact", "Phone Number"]), ("Contact", "Phone Number"))
 
-    def test_csv_reader_imports_rows_and_rejects_missing_values(self):
+    def test_csv_reader_imports_rows_and_rejects_missing_phone(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "contacts.csv"
-            path.write_text(f"Name,Phone\nAmy,{raw_phone()}\nMissing,\n", encoding="utf-8")
+            path.write_text(f"Name,Phone\nAmy,{raw_phone()}\n,{raw_phone('628')}\nMissing,\n", encoding="utf-8")
 
             accepted, rejected = read_csv_recipients(path, "Name", "Phone")
 
-        self.assertEqual([(row.name, row.phone) for row in accepted], [("Amy", raw_phone())])
+        self.assertEqual([(row.name, row.phone) for row in accepted], [("Amy", raw_phone()), ("", raw_phone("628"))])
         self.assertEqual(len(rejected), 1)
 
 
