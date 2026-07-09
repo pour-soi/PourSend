@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.DS_Store
+
+# Local app data and recipient backups
+ringcentral_recipient_prep_data/
+*backup*.json
+recipients*.json
+
+# Build and packaging outputs
+build/
+dist/
+*.spec
+
+# Temporary verification files
+work/
+tmp/
+temp/
+*.tmp
+*.temp
