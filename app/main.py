@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import sys
 
 from PySide6.QtCore import Qt
@@ -25,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.dialogs import CsvColumnDialog, PasteListDialog, PersonDialog
+from app.dialogs import PasteListDialog, PersonDialog
 from app.storage import load_recipient_data, make_saved_data, save_recipient_data
 from core.groups import (
     ALL_RECIPIENTS,
@@ -40,7 +39,7 @@ from core.groups import (
     rename_group,
     set_selected,
 )
-from core.importing import detect_csv_columns, read_csv_recipients, rows_to_add
+from core.importing import preview_import_file, rows_to_add
 from core.phone import normalize_us_phone
 from core.recipients import build_clipboard_output
 
@@ -73,7 +72,7 @@ class MainWindow(QMainWindow):
 
         add_button = QPushButton("Add Person")
         paste_button = QPushButton("Paste List")
-        import_button = QPushButton("Import CSV")
+        import_button = QPushButton("Import File")
         add_button.clicked.connect(self.add_person)
         paste_button.clicked.connect(self.paste_list)
         import_button.clicked.connect(self.import_csv)
@@ -329,40 +328,38 @@ class MainWindow(QMainWindow):
         return numbers
 
     def import_csv(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import CSV", "", "CSV files (*.csv);;All files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import File",
+            "",
+            "Import files (*.txt *.csv *.xlsx);;Text files (*.txt);;CSV files (*.csv);;Excel files (*.xlsx);;All files (*)",
+        )
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8-sig", newline="") as handle:
-                reader = csv.DictReader(handle)
-                columns = list(reader.fieldnames or [])
-        except (OSError, csv.Error) as exc:
-            QMessageBox.critical(self, "Import CSV", f"The CSV file could not be opened: {exc}")
+            preview_rows = preview_import_file(path, self.existing_normalized_numbers())
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Import file", f"The file could not be imported: {exc}")
             return
-        if not columns:
-            QMessageBox.warning(self, "Import CSV", "The CSV file is empty or has no header row.")
+        recipients = rows_to_add(preview_rows)
+        if not recipients:
+            QMessageBox.warning(self, "Import file", "No new valid phone numbers were found in the file.")
             return
-
-        name_column, phone_column = detect_csv_columns(columns)
-        if not name_column or not phone_column:
-            dialog = CsvColumnDialog(self, columns)
-            if dialog.exec() != CsvColumnDialog.Accepted:
-                return
-            name_column, phone_column = dialog.values()
-
-        try:
-            accepted, rejected = read_csv_recipients(path, name_column, phone_column)
-        except (OSError, csv.Error) as exc:
-            QMessageBox.critical(self, "Import CSV", f"The CSV file could not be imported: {exc}")
-            return
-
-        if not accepted:
-            QMessageBox.warning(self, "Import CSV", "No usable rows were found in the CSV file.")
-            return
-        for row in accepted:
-            self.recipients.append({"name": row.name, "phone": row.phone, "selected": False, "groups": []})
+        for recipient in recipients:
+            self.recipients.append(recipient)
         self.save_and_update()
-        QMessageBox.information(self, "Import CSV", f"Imported {len(accepted)} rows. Skipped {len(rejected)} malformed rows.")
+        added = len(recipients)
+        duplicates = sum(1 for row in preview_rows if row.status == "Duplicate in this batch")
+        existing = sum(1 for row in preview_rows if row.status == "Already exists")
+        invalid = sum(1 for row in preview_rows if row.status == "Invalid")
+        QMessageBox.information(
+            self,
+            "Import file",
+            f"Added: {added}\n"
+            f"Duplicates skipped: {duplicates}\n"
+            f"Already existed: {existing}\n"
+            f"Invalid skipped: {invalid}",
+        )
 
     def edit_selected(self) -> None:
         index = self.selected_visible_index()

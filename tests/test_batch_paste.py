@@ -1,7 +1,10 @@
 import unittest
+import tempfile
+import zipfile
+from pathlib import Path
 
 from app.storage import make_saved_data, parse_saved_data
-from core.importing import preview_pasted_recipients, rows_to_add
+from core.importing import normalized_numbers_from_text, preview_import_file, preview_pasted_recipients, rows_to_add
 
 
 def raw_phone(area: str = "415", exchange: str = "123", line: str = "4567", separator: str = "-") -> str:
@@ -49,7 +52,7 @@ class BatchPasteTests(unittest.TestCase):
         recipients = rows_to_add(rows)
 
         self.assertEqual([recipient["name"] for recipient in recipients], ["None", "None"])
-        self.assertEqual([recipient["phone"] for recipient in recipients], [raw_phone(), raw_phone("628")])
+        self.assertEqual([recipient["phone"] for recipient in recipients], [normalized(), normalized("628")])
 
     def test_duplicate_inside_same_batch_is_skipped(self):
         rows = preview_pasted_recipients(f"{raw_phone()}\n{normalized()}")
@@ -167,6 +170,129 @@ class BatchPasteTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].normalized, normalized())
         self.assertEqual(rows[0].status, "Already exists")
+
+    def test_required_single_number_formats(self):
+        formats = [
+            "4151111111",
+            "415 111 1111",
+            "415-111-1111",
+            "(415) 111-1111",
+            "+1 415 111 1111",
+            "1-415-111-1111",
+        ]
+
+        for value in formats:
+            with self.subTest(value=value):
+                self.assertEqual(normalized_numbers_from_text(value), ["+14151111111"])
+
+    def test_two_compact_numbers_separated_by_one_space(self):
+        self.assertEqual(
+            normalized_numbers_from_text("4151111111 6282222222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_two_dashed_numbers_on_one_line(self):
+        self.assertEqual(
+            normalized_numbers_from_text("415-111-1111 628-222-2222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_two_parenthesized_numbers_on_one_line(self):
+        self.assertEqual(
+            normalized_numbers_from_text("(415)111-1111 (628)222-2222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_two_plus_one_space_formatted_numbers_on_one_line(self):
+        self.assertEqual(
+            normalized_numbers_from_text("+1 415 111 1111 +1 628 222 2222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_numbers_surrounded_by_arbitrary_text(self):
+        self.assertEqual(
+            normalized_numbers_from_text("Primary: 4151111111 Secondary: 6282222222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_chinese_comma_separation(self):
+        self.assertEqual(
+            normalized_numbers_from_text("4151111111，6282222222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_slash_separation(self):
+        self.assertEqual(
+            normalized_numbers_from_text("4151111111 / 6282222222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_pipe_separation(self):
+        self.assertEqual(
+            normalized_numbers_from_text("4151111111 | 6282222222"),
+            ["+14151111111", "+16282222222"],
+        )
+
+    def test_preserves_number_order(self):
+        self.assertEqual(
+            normalized_numbers_from_text("5103333333 then 4151111111 then 6282222222"),
+            ["+15103333333", "+14151111111", "+16282222222"],
+        )
+
+    def test_txt_import_uses_shared_parser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "numbers.txt"
+            path.write_text("John 4151111111\n4151111111 6282222222", encoding="utf-8")
+            rows = preview_import_file(path)
+
+        self.assertEqual([row.normalized for row in rows], [
+            "+14151111111",
+            "+14151111111",
+            "+16282222222",
+        ])
+        self.assertEqual([row.status for row in rows], [
+            "Valid",
+            "Duplicate in this batch",
+            "Valid",
+        ])
+
+    def test_csv_import_uses_shared_parser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "numbers.csv"
+            path.write_text("Name,Phone\nAmy,4151111111 6282222222\n", encoding="utf-8")
+            rows = preview_import_file(path)
+
+        self.assertEqual([row.normalized for row in rows], ["+14151111111", "+16282222222"])
+
+    def test_xlsx_import_uses_shared_parser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "numbers.xlsx"
+            write_minimal_xlsx(path, ["Amy 4151111111", "6282222222"])
+            rows = preview_import_file(path)
+
+        self.assertEqual([row.normalized for row in rows], ["+14151111111", "+16282222222"])
+
+
+def write_minimal_xlsx(path: Path, values: list[str]) -> None:
+    shared_items = "".join(f"<si><t>{value}</t></si>" for value in values)
+    cells = "".join(
+        f'<row r="{index + 1}"><c r="A{index + 1}" t="s"><v>{index}</v></c></row>'
+        for index in range(len(values))
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+</Types>""")
+        archive.writestr("xl/workbook.xml", """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>""")
+        archive.writestr("xl/sharedStrings.xml", f"""<?xml version="1.0" encoding="UTF-8"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{shared_items}</sst>""")
+        archive.writestr("xl/worksheets/sheet1.xml", f"""<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{cells}</sheetData></worksheet>""")
 
 
 if __name__ == "__main__":

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import csv
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from xml.etree import ElementTree
 
 from .phone import normalize_us_phone
 
@@ -93,10 +95,35 @@ def preview_pasted_recipients(text: str, existing_numbers: set[str] | None = Non
 def rows_to_add(rows: list[PastePreviewRow], groups: list[str] | None = None) -> list[dict]:
     memberships = list(groups or [])
     return [
-        {"name": row.name, "phone": row.phone, "selected": False, "groups": memberships.copy()}
+        {"name": row.name, "phone": row.normalized, "selected": False, "groups": memberships.copy()}
         for row in rows
         if row.status == "Valid"
     ]
+
+
+def normalized_numbers_from_text(text: str) -> list[str]:
+    return [
+        row.normalized
+        for row in preview_pasted_recipients(text)
+        if row.normalized and row.status in {"Valid", "Duplicate in this batch"}
+    ]
+
+
+def preview_import_file(path: str | Path, existing_numbers: set[str] | None = None) -> list[PastePreviewRow]:
+    source = Path(path)
+    suffix = source.suffix.lower()
+    try:
+        if suffix == ".txt":
+            text = source.read_text(encoding="utf-8-sig")
+        elif suffix == ".csv":
+            text = _csv_to_text(source)
+        elif suffix == ".xlsx":
+            text = _xlsx_to_text(source)
+        else:
+            raise ValueError("Unsupported import file type")
+    except (csv.Error, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+        raise ValueError(f"Could not read {suffix or 'file'} content") from exc
+    return preview_pasted_recipients(text, existing_numbers)
 
 
 def _parse_line(line: str) -> tuple[str, str] | None:
@@ -129,9 +156,11 @@ def _parse_preview_line(line: str) -> list[tuple[str, str]]:
     delimited = _split_delimited(line)
     if len(delimited) > 1:
         phone_like = [cell for cell in delimited if _looks_like_phone(cell)]
+        if not phone_like:
+            return []
         if len(delimited) == 2 and len(phone_like) == 1 and not _looks_like_phone(delimited[0]):
             return [(delimited[0], delimited[1])]
-        return [("", cell) for cell in delimited]
+        return [("", cell) for cell in phone_like]
 
     if _looks_like_phone(line):
         return [("", line)]
@@ -152,6 +181,64 @@ def _extract_phone_candidates(line: str) -> list[tuple[str, str]]:
         name = line[: match.start()].strip(" ,;:-\t")
         return [(name, match.group().strip())]
     return [("", match.group().strip()) for match in matches]
+
+
+def _csv_to_text(path: Path) -> str:
+    lines: list[str] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        for row in reader:
+            cells = [cell.strip() for cell in row if cell.strip()]
+            if cells:
+                lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+def _xlsx_to_text(path: Path) -> str:
+    with zipfile.ZipFile(path) as archive:
+        shared_strings = _read_xlsx_shared_strings(archive)
+        worksheet_names = sorted(
+            name
+            for name in archive.namelist()
+            if name.startswith("xl/worksheets/") and name.endswith(".xml")
+        )
+        lines: list[str] = []
+        for worksheet_name in worksheet_names:
+            root = ElementTree.fromstring(archive.read(worksheet_name))
+            for row in root.findall(".//{*}sheetData/{*}row"):
+                cells = [_xlsx_cell_text(cell, shared_strings) for cell in row.findall("{*}c")]
+                cleaned = [cell for cell in cells if cell]
+                if cleaned:
+                    lines.append("\t".join(cleaned))
+    return "\n".join(lines)
+
+
+def _read_xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in archive.namelist():
+        return []
+    root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+    strings: list[str] = []
+    for item in root.findall("{*}si"):
+        strings.append("".join(text.text or "" for text in item.findall(".//{*}t")))
+    return strings
+
+
+def _xlsx_cell_text(cell: ElementTree.Element, shared_strings: list[str]) -> str:
+    cell_type = cell.get("t")
+    if cell_type == "inlineStr":
+        return "".join(text.text or "" for text in cell.findall(".//{*}t")).strip()
+
+    value = cell.find("{*}v")
+    if value is None or value.text is None:
+        return ""
+
+    text = value.text.strip()
+    if cell_type == "s":
+        try:
+            return shared_strings[int(text)].strip()
+        except (ValueError, IndexError):
+            return ""
+    return text
 
 
 def _split_delimited(line: str) -> list[str]:
