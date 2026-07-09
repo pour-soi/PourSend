@@ -304,13 +304,20 @@ class MainWindow(QMainWindow):
             self.recipients.append(recipient)
         self.save_and_update()
         added, duplicates, existing, invalid = dialog.summary_counts()
+        extracted = added + duplicates + existing + invalid
+        invalid_examples = dialog.invalid_examples()
+        invalid_text = ""
+        if invalid_examples:
+            invalid_text = "\nInvalid examples:\n" + "\n".join(invalid_examples)
         QMessageBox.information(
             self,
             "Paste list",
+            f"Extracted: {extracted}\n"
             f"Added: {added}\n"
             f"Duplicates skipped: {duplicates}\n"
             f"Already existed: {existing}\n"
-            f"Invalid skipped: {invalid}",
+            f"Invalid skipped: {invalid}"
+            f"{invalid_text}",
         )
 
     def existing_normalized_numbers(self) -> set[str]:

@@ -12,6 +12,9 @@ NAME_COLUMNS = {"name", "full_name", "fullname", "contact", "contact_name"}
 PHONE_COLUMNS = {"phone", "phone_number", "phonenumber", "mobile", "cell", "cell_phone"}
 PHONE_AT_END_RE = re.compile(r"(?P<phone>\+?[\d(][\d\s().-]{6,})\s*$")
 PHONE_CHARS_RE = re.compile(r"^[\d\s().+\-]+$")
+PHONE_EXTRACT_RE = re.compile(
+    r"(?<!\d)(?:\+?1[\s.-]*)?(?:\(\d{3}\)|\d{3})[\s.-]*\d{3}[\s.-]*\d{4}(?!\d)"
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,13 @@ def _parse_line(line: str) -> tuple[str, str] | None:
 
 
 def _parse_preview_line(line: str) -> list[tuple[str, str]]:
+    extracted = _extract_phone_candidates(line)
+    if len(extracted) > 1:
+        return [("", phone) for _name, phone in extracted]
+    if len(extracted) == 1:
+        name, phone = extracted[0]
+        return [(name, phone)]
+
     delimited = _split_delimited(line)
     if len(delimited) > 1:
         phone_like = [cell for cell in delimited if _looks_like_phone(cell)]
@@ -130,7 +140,18 @@ def _parse_preview_line(line: str) -> list[tuple[str, str]]:
     if parsed is not None:
         return [parsed]
 
-    return [("", line)]
+    return []
+
+
+def _extract_phone_candidates(line: str) -> list[tuple[str, str]]:
+    matches = list(PHONE_EXTRACT_RE.finditer(line))
+    if not matches:
+        return []
+    if len(matches) == 1:
+        match = matches[0]
+        name = line[: match.start()].strip(" ,;:-\t")
+        return [(name, match.group().strip())]
+    return [("", match.group().strip()) for match in matches]
 
 
 def _split_delimited(line: str) -> list[str]:

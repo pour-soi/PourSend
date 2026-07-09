@@ -143,6 +143,9 @@ class PasteListDialog(QDialog):
             sum(1 for row in self.preview_rows if row.status == "Invalid"),
         )
 
+    def invalid_examples(self, limit: int = 5) -> list[str]:
+        return [row.phone for row in self.preview_rows if row.status == "Invalid"][:limit]
+
 
 class CsvColumnDialog(QDialog):
     def __init__(self, parent, columns: list[str]):

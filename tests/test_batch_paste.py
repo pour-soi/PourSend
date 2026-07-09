@@ -102,6 +102,72 @@ class BatchPasteTests(unittest.TestCase):
         self.assertEqual([recipient["name"] for recipient in restored_recipients], ["None", "None"])
         self.assertEqual([recipient["groups"] for recipient in restored_recipients], [["Caregivers"], ["Caregivers"]])
 
+    def test_strict_old_name_phone_format_still_works(self):
+        rows = preview_pasted_recipients(f"Amy, {raw_phone()}")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].name, "Amy")
+        self.assertEqual(rows[0].normalized, normalized())
+        self.assertEqual(rows[0].status, "Valid")
+
+    def test_messy_text_with_multiple_phone_formats(self):
+        text = (
+            f"Call Amy at {raw_phone()} or John at ({'628'}) {'123'}-{'4567'}. "
+            f"Backup: {'510'} {'123'} {'4567'}; office +1 {'707'} {'123'} {'4567'}; "
+            f"legacy 1-{'925'}-{'123'}-{'4567'}"
+        )
+
+        rows = preview_pasted_recipients(text)
+
+        self.assertEqual([row.normalized for row in rows], [
+            normalized(),
+            normalized("628"),
+            normalized("510"),
+            normalized("707"),
+            normalized("925"),
+        ])
+        self.assertEqual([row.status for row in rows], ["Valid", "Valid", "Valid", "Valid", "Valid"])
+
+    def test_pasted_names_and_phone_numbers_are_extracted(self):
+        rows = preview_pasted_recipients(f"Amy {raw_phone()}\nJohn\t{raw_phone('628')}")
+
+        self.assertEqual([(row.name, row.normalized) for row in rows], [
+            ("Amy", normalized()),
+            ("John", normalized("628")),
+        ])
+
+    def test_duplicate_numbers_in_different_formats_are_detected(self):
+        rows = preview_pasted_recipients(
+            f"{raw_phone()}\n"
+            f"({'415'}) {'123'}-{'4567'}\n"
+            f"+1 {'415'} {'123'} {'4567'}"
+        )
+
+        self.assertEqual([row.status for row in rows], [
+            "Valid",
+            "Duplicate in this batch",
+            "Duplicate in this batch",
+        ])
+
+    def test_invalid_non_phone_text_is_ignored(self):
+        rows = preview_pasted_recipients("Call Amy soon. No number here.")
+
+        self.assertEqual(rows, [])
+
+    def test_invalid_phone_like_fragment_is_reported(self):
+        rows = preview_pasted_recipients("123")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].phone, "123")
+        self.assertEqual(rows[0].status, "Invalid")
+
+    def test_already_existing_normalized_number_is_skipped_from_messy_text(self):
+        rows = preview_pasted_recipients(f"Existing contact: ({'415'}) {'123'}-{'4567'}", {normalized()})
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].normalized, normalized())
+        self.assertEqual(rows[0].status, "Already exists")
+
 
 if __name__ == "__main__":
     unittest.main()
