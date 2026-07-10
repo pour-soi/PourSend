@@ -4,10 +4,12 @@ A local Windows desktop utility for organizing recipients, batch-importing phone
 
 [![Latest Release](https://img.shields.io/github/v/release/pour-soi/PourSend?label=latest%20release)](https://github.com/pour-soi/PourSend/releases/tag/v2.0.0)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
-![Tests](https://img.shields.io/badge/tests-114%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-134%20passing-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Portable Windows app · Local data · No telemetry
+
+![PourSend main window](assets/poursend-main-window.png)
 
 PourSend does not send messages itself. You copy prepared recipient numbers from the app, paste them into RingCentral, and send manually.
 
@@ -44,7 +46,7 @@ No installation is required.
 - Sort by recently added order, phone number, or group.
 - Choose ascending or descending sort direction.
 - Display phone numbers in selectable formats.
-- Use checked-recipient workflows for copy, export, move, and batch edit actions.
+- Use checked-recipient workflows for copy, export, group membership, and batch edit actions.
 
 ### Copy & Export
 
@@ -92,23 +94,25 @@ Open app -> Choose a group or recipients -> Check recipients -> Copy numbers -> 
 
 Each valid phone number becomes a separate recipient unless that normalized phone number already exists.
 
+Existing phone numbers are not duplicated. If an existing recipient is imported or added to a new group, PourSend adds that group membership to the existing recipient.
+
 Names and surrounding labels in pasted or imported text are used only to help detect phone numbers. They are not saved as recipient identity.
 
 During preview and import:
 
 - Duplicate numbers inside the pasted batch are skipped.
-- Phone numbers that already exist in the recipient list are skipped.
+- Phone numbers that already belong to the chosen group are skipped.
 - Invalid phone numbers are skipped.
 - Existing recipients are never overwritten.
 - Supported older data schemas are migrated automatically.
 - New recipient workflows do not require names.
-- Only newly added recipients receive the chosen batch group.
+- Newly added recipients and existing recipients added to a new group receive the chosen batch group.
 
 ### Groups
 
-A recipient belongs to one group. Records without a valid group fall back to `Default`.
+A recipient can belong to one or more groups. Records without a valid group fall back to `Default`.
 
-Deleting a group does not delete the recipients inside it. It moves those recipients to `Default`.
+Deleting a group does not delete the recipients inside it. Recipients with no remaining valid groups fall back to `Default`.
 
 You can open a group, search within that group, then select or deselect only the visible recipients in that group.
 
@@ -151,7 +155,7 @@ Use **Import Backup** to restore recipients, groups, settings, and notes from a 
 - `Ctrl+F`: focus the search field.
 - `Ctrl+A`: check all visible recipients when focus is not in a text field.
 - `Ctrl+Z`: undo the most recent successful import when focus is not in a text field.
-- `Delete`: delete the selected recipient rows when focus is not in a text field.
+- `Delete`: delete checked recipients when focus is not in a text field.
 
 ## Data Location
 
@@ -191,4 +195,4 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 114 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, backup import/export, shortcut safety, release versioning, and storage path branding.
+The current suite has 134 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, backup import/export, shortcut safety, release versioning, and storage path branding.
