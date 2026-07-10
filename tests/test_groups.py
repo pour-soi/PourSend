@@ -9,6 +9,7 @@ from core.groups import (
     DEFAULT_GROUP,
     assign_to_group,
     batch_update_recipients,
+    checked_recipient_indexes,
     create_group,
     count_duplicate_phone_numbers,
     delete_group,
@@ -450,6 +451,29 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(result.duplicates_removed, 1)
         self.assertEqual(result.invalid_skipped, 1)
         self.assertEqual(result.output, normalized())
+
+    def test_checked_recipient_lookup_survives_sorting(self):
+        recipients = sample_recipients()
+        recipients[0]["selected"] = True
+        recipients[2]["selected"] = True
+
+        filtered_recipient_indexes(recipients, ALL_RECIPIENTS, "", "e164", SORT_PHONE, True)
+
+        self.assertEqual(checked_recipient_indexes(recipients), [0, 2])
+
+    def test_checked_recipient_lookup_survives_search_and_filter_refresh(self):
+        recipients = sample_recipients()
+        recipients[1]["selected"] = True
+
+        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers", "morning"), [0])
+        self.assertEqual(checked_recipient_indexes(recipients), [1])
+
+    def test_checked_recipient_lookup_deduplicates_by_phone_number(self):
+        recipients = sample_recipients()
+        recipients.append({"phone": normalized(), "selected": True, "group": "Follow-up", "notes": ""})
+        recipients[0]["selected"] = True
+
+        self.assertEqual(checked_recipient_indexes(recipients), [0])
 
     def test_imported_recipients_receive_selected_group(self):
         rows = preview_pasted_recipients(f"Amy {raw_phone()}\nJohn {raw_phone('628')}")

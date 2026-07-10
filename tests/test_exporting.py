@@ -11,6 +11,7 @@ from core.exporting import (
     SCOPE_SEARCH,
     SCOPE_SELECTION,
     backup_json,
+    build_copy_text,
     export_csv,
     export_txt,
     export_xlsx_bytes,
@@ -70,7 +71,7 @@ class ExportingTests(unittest.TestCase):
             descending=True,
         )
 
-        self.assertEqual([row["phone"] for row in selection.recipients], ["+17073333333", "+14151111111"])
+        self.assertEqual([row["phone"] for row in selection.recipients], ["+14151111111", "+17073333333"])
 
     def test_export_scope_current_selection_deduplicates_by_phone_number(self):
         self.recipients.append(recipient("415-111-1111", "Follow-up", "duplicate", True))
@@ -78,6 +79,23 @@ class ExportingTests(unittest.TestCase):
         selection = resolve_recipient_scope(self.recipients, SCOPE_SELECTION, group_filter=ALL_RECIPIENTS)
 
         self.assertEqual([row["phone"] for row in selection.recipients], ["+14151111111", "+17073333333"])
+
+    def test_export_scope_current_selection_includes_hidden_checked_recipients(self):
+        selection = resolve_recipient_scope(
+            self.recipients,
+            SCOPE_SELECTION,
+            group_filter="Caregivers",
+            query="comma",
+        )
+
+        self.assertEqual([row["phone"] for row in selection.recipients], ["+14151111111", "+17073333333"])
+
+    def test_copy_selected_uses_checked_recipients(self):
+        selection = resolve_recipient_scope(self.recipients, SCOPE_SELECTION, group_filter="Caregivers", query="comma")
+
+        text = build_copy_text(selection.recipients, "displayed", PHONE_FORMAT_DASHES)
+
+        self.assertEqual(text, "415-111-1111\n707-333-3333")
 
     def test_txt_export_uses_display_format_and_scope(self):
         text = export_txt(self.recipients[:2], PHONE_FORMAT_DASHES)
@@ -139,7 +157,10 @@ class ExportingTests(unittest.TestCase):
         selection = resolve_recipient_scope(recipients, SCOPE_SELECTION)
 
         self.assertEqual(selection.recipients, [])
-        self.assertEqual(selection.empty_reason, "No recipients match that scope.")
+        self.assertEqual(
+            selection.empty_reason,
+            "No recipients are checked. Select one or more recipients in the Select column, then try again.",
+        )
 
     def test_backup_import_rejects_invalid_json(self):
         with self.assertRaises(ValueError):

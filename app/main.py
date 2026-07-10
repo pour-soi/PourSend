@@ -48,6 +48,7 @@ from core.groups import (
     ALL_RECIPIENTS,
     assign_to_group,
     batch_update_recipients,
+    checked_recipient_indexes as checked_recipient_indexes_for_bulk,
     collect_groups,
     count_duplicate_phone_numbers,
     create_group,
@@ -72,6 +73,7 @@ from core.phone import PHONE_FORMATS, format_phone_number, normalize_us_phone
 
 
 ALL_RECIPIENTS_LABEL = "All Recipients"
+NO_CHECKED_RECIPIENTS_MESSAGE = "No recipients are checked. Select one or more recipients in the Select column, then try again."
 
 
 class MainWindow(QMainWindow):
@@ -414,14 +416,8 @@ class MainWindow(QMainWindow):
             return None
         return self._recipient_index(row)
 
-    def checked_visible_indexes(self) -> list[int]:
-        indexes: list[int] = []
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            index = self._recipient_index(row)
-            if item is not None and index is not None and item.checkState() == Qt.Checked:
-                indexes.append(index)
-        return indexes
+    def checked_recipient_indexes(self) -> list[int]:
+        return checked_recipient_indexes_for_bulk(self.recipients)
 
     def add_person(self) -> None:
         dialog = PersonDialog(self, groups=self.groups, selected_group=self.preferred_group())
@@ -627,9 +623,9 @@ class MainWindow(QMainWindow):
         self.save_and_update(selected_group=valid_groups[0])
 
     def batch_edit_checked(self) -> None:
-        indexes = self.checked_visible_indexes()
+        indexes = self.checked_recipient_indexes()
         if not indexes:
-            QMessageBox.information(self, "Batch edit", "Check one or more visible recipients first.")
+            QMessageBox.information(self, "Batch edit", NO_CHECKED_RECIPIENTS_MESSAGE)
             return
         dialog = BatchEditDialog(self, self.groups)
         if dialog.exec() != BatchEditDialog.Accepted:
@@ -645,14 +641,14 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Batch edit", f"Updated {updated} recipients.")
 
     def delete_selected(self) -> None:
-        indexes = sorted({self._recipient_index(item.row()) for item in self.table.selectedItems() if self._recipient_index(item.row()) is not None}, reverse=True)
+        indexes = self.checked_recipient_indexes()
         if not indexes:
-            index = self.selected_visible_index()
-            indexes = [] if index is None else [index]
-        if not indexes:
-            QMessageBox.information(self, "Delete recipient", "Select one or more recipients to delete.")
+            QMessageBox.information(self, "Delete recipient", NO_CHECKED_RECIPIENTS_MESSAGE)
             return
-        for index in indexes:
+        answer = QMessageBox.question(self, "Delete recipient", f"Delete {len(indexes)} recipients?")
+        if answer != QMessageBox.Yes:
+            return
+        for index in sorted(indexes, reverse=True):
             del self.recipients[index]
         self.save_and_update()
 
@@ -729,9 +725,9 @@ class MainWindow(QMainWindow):
         self.save_and_update(selected_group=ALL_RECIPIENTS)
 
     def assign_checked_to_group(self) -> None:
-        indexes = self.checked_visible_indexes()
+        indexes = self.checked_recipient_indexes()
         if not indexes:
-            QMessageBox.information(self, "Add to group", "Check one or more visible recipients first.")
+            QMessageBox.information(self, "Add to group", NO_CHECKED_RECIPIENTS_MESSAGE)
             return
         if not self.groups:
             QMessageBox.information(self, "Add to group", "Create a group first.")
@@ -744,9 +740,9 @@ class MainWindow(QMainWindow):
         self.save_and_update(selected_group=self.current_group_filter())
 
     def remove_checked_from_current_group(self) -> None:
-        indexes = self.checked_visible_indexes()
+        indexes = self.checked_recipient_indexes()
         if not indexes:
-            QMessageBox.information(self, "Remove from group", "Check one or more visible recipients first.")
+            QMessageBox.information(self, "Remove from group", NO_CHECKED_RECIPIENTS_MESSAGE)
             return
         group = self.current_named_group()
         if group is None:

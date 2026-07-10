@@ -261,6 +261,21 @@ def filtered_recipient_indexes(
     return sorted_recipient_indexes(recipients, indexes, sort_field, descending)
 
 
+def checked_recipient_indexes(recipients: Iterable[dict]) -> list[int]:
+    indexes: list[int] = []
+    seen: set[str] = set()
+    for index, recipient in enumerate(recipients):
+        if not recipient.get("selected"):
+            continue
+        key = recipient_phone_key(recipient)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        indexes.append(index)
+    return indexes
+
+
 def set_selected(recipients: list[dict], indexes: Iterable[int], selected: bool) -> None:
     for index in indexes:
         if 0 <= index < len(recipients):

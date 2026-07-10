@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from html import escape
 
 from app.storage import make_saved_data, parse_saved_data, parse_saved_settings
-from core.groups import ALL_RECIPIENTS, filtered_recipient_indexes, valid_recipient_groups
+from core.groups import ALL_RECIPIENTS, checked_recipient_indexes, filtered_recipient_indexes, valid_recipient_groups
 from core.phone import PHONE_FORMAT_E164, format_phone_number, normalize_us_phone
 
 
@@ -51,11 +51,13 @@ def resolve_recipient_scope(
     elif scope == SCOPE_SEARCH:
         indexes = visible_indexes
     elif scope == SCOPE_SELECTION:
-        indexes = [index for index in visible_indexes if recipients[index].get("selected")]
+        indexes = checked_recipient_indexes(recipients)
     else:
         indexes = []
 
     if not indexes:
+        if scope == SCOPE_SELECTION:
+            return ExportSelection([], "No recipients are checked. Select one or more recipients in the Select column, then try again.")
         return ExportSelection([], "No recipients match that scope.")
     return ExportSelection(_dedupe_recipients([recipients[index] for index in indexes]))
 
