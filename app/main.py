@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -16,9 +17,11 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QStackedLayout,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -26,8 +29,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.dialogs import BatchEditDialog, ExportDialog, ImportPreviewDialog, PasteListDialog, PersonDialog
+from app.dialogs import DeleteConfirmationDialog, BatchEditDialog, ExportDialog, ImportPreviewDialog, PasteListDialog, PersonDialog
 from app.storage import load_recipient_data, save_recipient_data
+from app.theme import DANGER_BUTTON, PRIMARY_BUTTON, SECONDARY_BUTTON, SUBTLE_BUTTON, apply_app_theme, mark_button
+from app.ui_helpers import checked_status_text, empty_state_message, group_display_text, group_recipient_count, workspace_title
 from core.exporting import (
     COPY_DIGITS,
     COPY_DISPLAYED,
@@ -80,13 +85,15 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("PourSend")
-        self.resize(1180, 700)
+        self.resize(1240, 780)
+        self.setMinimumSize(980, 620)
         self.recipients, self.groups, self.settings, load_error = load_recipient_data()
         self.setAcceptDrops(True)
         self.recent_group = DEFAULT_GROUP
         self.last_imported_numbers: list[str | dict] = []
         self._building_table = False
         self._building_groups = False
+        apply_app_theme(QApplication.instance())
         self._build_ui()
         QApplication.instance().installEventFilter(self)
         self.refresh_group_list()
@@ -96,162 +103,259 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         title = QLabel("PourSend")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        title.setObjectName("AppTitle")
+        subtitle = QLabel("Recipient organizer")
+        subtitle.setObjectName("AppSubtitle")
+        title_block = QVBoxLayout()
+        title_block.setSpacing(0)
+        title_block.addWidget(title)
+        title_block.addWidget(subtitle)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search by phone number or notes")
+        self.search.setObjectName("SearchField")
+        self.search.setPlaceholderText("Search recipients")
+        self.search.setClearButtonEnabled(True)
+        self.search.setMinimumWidth(300)
         self.search.textChanged.connect(self.refresh_table)
 
         self.sort_field_combo = QComboBox()
         self.sort_field_combo.addItem("Recently Added", SORT_RECENT)
         self.sort_field_combo.addItem("Phone Number", SORT_PHONE)
         self.sort_field_combo.addItem("Group", SORT_GROUP)
+        self.sort_field_combo.setMinimumWidth(150)
         self.sort_field_combo.currentIndexChanged.connect(self.refresh_table)
 
         self.sort_direction_combo = QComboBox()
         self.sort_direction_combo.addItem("Ascending", False)
         self.sort_direction_combo.addItem("Descending", True)
+        self.sort_direction_combo.setMinimumWidth(130)
         self.sort_direction_combo.currentIndexChanged.connect(self.refresh_table)
 
-        add_button = QPushButton("Add Recipient")
-        paste_button = QPushButton("Paste List")
-        import_button = QPushButton("Import File")
+        add_button = mark_button(QPushButton("Add Recipient"), PRIMARY_BUTTON)
+        paste_button = mark_button(QPushButton("Paste List"), SECONDARY_BUTTON)
+        import_button = mark_button(QPushButton("Import File"), SECONDARY_BUTTON)
+        copy_button = mark_button(QPushButton("Copy"), SECONDARY_BUTTON)
+        export_button = mark_button(QPushButton("Export"), SECONDARY_BUTTON)
+        more_button = mark_button(QPushButton("More"), SUBTLE_BUTTON)
         add_button.clicked.connect(self.add_person)
         paste_button.clicked.connect(self.paste_list)
         import_button.clicked.connect(self.import_csv)
+        copy_button.clicked.connect(self.copy_selected)
+        export_button.clicked.connect(self.export_recipients)
+
+        more_menu = QMenu(more_button)
+        more_menu.addAction("Undo Last Import", self.undo_last_import)
+        more_menu.addSeparator()
+        more_menu.addAction("Import Backup", self.import_backup)
+        more_menu.addAction("Export Backup", self.export_backup)
+        more_menu.addSeparator()
+        more_menu.addAction("Clear All Data", self.clear_all)
+        more_button.setMenu(more_menu)
 
         self.group_list = QListWidget()
         self.group_list.currentItemChanged.connect(lambda _current, _previous: self.refresh_table())
         self.group_list.setMinimumWidth(180)
+        self.group_list.setMaximumWidth(240)
 
-        new_group_button = QPushButton("New Group")
-        rename_group_button = QPushButton("Rename Group")
-        delete_group_button = QPushButton("Delete Group")
-        assign_group_button = QPushButton("Add Checked to Group")
-        remove_group_button = QPushButton("Remove Checked from Group")
+        new_group_button = mark_button(QPushButton("+ New Group"), SECONDARY_BUTTON)
+        rename_group_button = mark_button(QPushButton("Rename"), SUBTLE_BUTTON)
+        delete_group_button = mark_button(QPushButton("Delete"), SUBTLE_BUTTON)
+        assign_group_button = mark_button(QPushButton("Add Checked"), SUBTLE_BUTTON)
+        remove_group_button = mark_button(QPushButton("Remove Checked"), SUBTLE_BUTTON)
         new_group_button.clicked.connect(self.create_group)
         rename_group_button.clicked.connect(self.rename_group)
         delete_group_button.clicked.connect(self.delete_group)
         assign_group_button.clicked.connect(self.assign_checked_to_group)
         remove_group_button.clicked.connect(self.remove_checked_from_current_group)
 
+        group_title = QLabel("Groups")
+        group_title.setObjectName("SectionTitle")
         group_tools = QVBoxLayout()
-        group_tools.addWidget(QLabel("Groups"))
+        group_tools.setContentsMargins(12, 12, 12, 12)
+        group_tools.setSpacing(8)
+        group_tools.addWidget(group_title)
         group_tools.addWidget(self.group_list, stretch=1)
-        for button in [
-            new_group_button,
-            rename_group_button,
-            delete_group_button,
-            assign_group_button,
-            remove_group_button,
-        ]:
-            group_tools.addWidget(button)
+        group_tools.addWidget(new_group_button)
+        group_action_row = QHBoxLayout()
+        group_action_row.setSpacing(6)
+        group_action_row.addWidget(rename_group_button)
+        group_action_row.addWidget(delete_group_button)
+        group_tools.addLayout(group_action_row)
+        group_checked_row = QHBoxLayout()
+        group_checked_row.setSpacing(6)
+        group_checked_row.addWidget(assign_group_button)
+        group_checked_row.addWidget(remove_group_button)
+        group_tools.addLayout(group_checked_row)
 
-        top = QHBoxLayout()
-        top.addWidget(title)
-        top.addWidget(self.search, stretch=1)
-        top.addWidget(QLabel("Sort"))
-        top.addWidget(self.sort_field_combo)
-        top.addWidget(self.sort_direction_combo)
-        top.addWidget(add_button)
-        top.addWidget(paste_button)
-        top.addWidget(import_button)
+        sidebar = QFrame()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setLayout(group_tools)
+
+        command_bar = QHBoxLayout()
+        command_bar.setSpacing(8)
+        command_bar.addWidget(add_button)
+        command_bar.addWidget(paste_button)
+        command_bar.addWidget(import_button)
+        command_bar.addSpacing(8)
+        command_bar.addWidget(copy_button)
+        command_bar.addWidget(export_button)
+        command_bar.addWidget(more_button)
+
+        header = QFrame()
+        header.setObjectName("Header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(16)
+        header_layout.addLayout(title_block)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.search)
+        header_layout.addLayout(command_bar)
+
+        self.workspace_title = QLabel("All Recipients")
+        self.workspace_title.setObjectName("WorkspaceTitle")
+        self.workspace_meta = QLabel("")
+        self.workspace_meta.setObjectName("WorkspaceMeta")
+
+        workspace_heading = QHBoxLayout()
+        workspace_heading.setSpacing(8)
+        workspace_heading.addWidget(self.workspace_title)
+        workspace_heading.addWidget(self.workspace_meta)
+        workspace_heading.addStretch(1)
+
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(8)
+        filter_bar.addWidget(QLabel("Sort by"))
+        filter_bar.addWidget(self.sort_field_combo)
+        filter_bar.addWidget(self.sort_direction_combo)
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Select", "Phone number", "Group", "Notes", "Status"])
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Interactive)
-        header.setSectionResizeMode(2, QHeaderView.Interactive)
-        header.setSectionResizeMode(3, QHeaderView.Interactive)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(42)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        table_header = self.table.horizontalHeader()
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(1, QHeaderView.Interactive)
+        table_header.setSectionResizeMode(2, QHeaderView.Interactive)
+        table_header.setSectionResizeMode(3, QHeaderView.Interactive)
+        table_header.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setColumnWidth(1, 190)
         self.table.setColumnWidth(2, 170)
         self.table.setColumnWidth(3, 260)
         self.table.itemChanged.connect(self.table_item_changed)
         self.table.itemDoubleClicked.connect(lambda _item: self.edit_selected())
 
-        select_all = QPushButton("Select All in This Group")
-        deselect_all = QPushButton("Deselect All in This Group")
-        edit_button = QPushButton("Edit Recipient")
-        batch_edit_button = QPushButton("Batch Edit Checked")
-        delete_button = QPushButton("Delete Recipient")
-        undo_import_button = QPushButton("Undo Last Import")
-        export_button = QPushButton("Export")
-        export_backup_button = QPushButton("Export Backup")
-        import_backup_button = QPushButton("Import Backup")
-        clear_button = QPushButton("Clear All Data")
+        self.empty_state = QWidget()
+        empty_layout = QVBoxLayout(self.empty_state)
+        empty_layout.setAlignment(Qt.AlignCenter)
+        self.empty_title = QLabel("No recipients found")
+        self.empty_title.setObjectName("EmptyTitle")
+        self.empty_subtitle = QLabel("Try changing your search or add a new recipient.")
+        self.empty_subtitle.setObjectName("EmptySubtitle")
+        empty_layout.addWidget(self.empty_title, alignment=Qt.AlignCenter)
+        empty_layout.addWidget(self.empty_subtitle, alignment=Qt.AlignCenter)
+
+        table_area = QWidget()
+        self.table_stack = QStackedLayout(table_area)
+        self.table_stack.addWidget(self.table)
+        self.table_stack.addWidget(self.empty_state)
+
+        select_all = mark_button(QPushButton("Select All in This Group"), SUBTLE_BUTTON)
+        deselect_all = mark_button(QPushButton("Deselect All in This Group"), SUBTLE_BUTTON)
+        edit_button = mark_button(QPushButton("Edit Recipient"), SECONDARY_BUTTON)
         select_all.clicked.connect(lambda: self.set_all_visible(True))
         deselect_all.clicked.connect(lambda: self.set_all_visible(False))
         edit_button.clicked.connect(self.edit_selected)
-        batch_edit_button.clicked.connect(self.batch_edit_checked)
-        delete_button.clicked.connect(self.delete_selected)
-        undo_import_button.clicked.connect(self.undo_last_import)
-        export_button.clicked.connect(self.export_recipients)
-        export_backup_button.clicked.connect(self.export_backup)
-        import_backup_button.clicked.connect(self.import_backup)
-        clear_button.clicked.connect(self.clear_all)
 
-        tools = QHBoxLayout()
-        for button in [
-            select_all,
-            deselect_all,
-            edit_button,
-            batch_edit_button,
-            delete_button,
-            undo_import_button,
-            export_button,
-            export_backup_button,
-            import_backup_button,
-            clear_button,
-        ]:
-            tools.addWidget(button)
-        tools.addStretch(1)
+        table_tools = QHBoxLayout()
+        table_tools.setSpacing(8)
+        table_tools.addWidget(select_all)
+        table_tools.addWidget(deselect_all)
+        table_tools.addWidget(edit_button)
+        table_tools.addStretch(1)
 
         self.phone_format_combo = QComboBox()
         for format_key, label in PHONE_FORMATS:
             self.phone_format_combo.addItem(label, format_key)
+        self.phone_format_combo.setMinimumWidth(150)
         saved_format = self.settings.get("phone_format")
         for index in range(self.phone_format_combo.count()):
             if self.phone_format_combo.itemData(index) == saved_format:
                 self.phone_format_combo.setCurrentIndex(index)
                 break
         self.phone_format_combo.currentIndexChanged.connect(self.phone_format_changed)
+        filter_bar.addWidget(QLabel("Phone format"))
+        filter_bar.addWidget(self.phone_format_combo)
 
         self.copy_scope_combo = QComboBox()
         self.copy_scope_combo.addItem("Checked Numbers", SCOPE_SELECTION)
         self.copy_scope_combo.addItem("Current Search", SCOPE_SEARCH)
+        self.copy_scope_combo.setMinimumWidth(175)
         self.copy_format_combo = QComboBox()
         self.copy_format_combo.addItem("Displayed Number", COPY_DISPLAYED)
         self.copy_format_combo.addItem("Digits Only", COPY_DIGITS)
         self.copy_format_combo.addItem("E.164", COPY_E164)
+        self.copy_format_combo.setMinimumWidth(175)
         self.count_label = QLabel("")
-        copy_button = QPushButton("Copy Checked Numbers")
-        copy_button.setMinimumHeight(48)
-        copy_button.setStyleSheet("font-size: 17px; font-weight: 600;")
-        copy_button.clicked.connect(self.copy_selected)
+        self.count_label.setObjectName("MutedText")
+        filter_bar.addStretch(1)
+        table_tools.addWidget(QLabel("Copy"))
+        table_tools.addWidget(self.copy_scope_combo)
+        table_tools.addWidget(self.copy_format_combo)
 
-        bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("Phone format"))
-        bottom.addWidget(self.phone_format_combo)
-        bottom.addWidget(QLabel("Copy"))
-        bottom.addWidget(self.copy_scope_combo)
-        bottom.addWidget(self.copy_format_combo)
-        bottom.addStretch(1)
-        bottom.addWidget(self.count_label)
+        self.bulk_bar = QFrame()
+        self.bulk_bar.setObjectName("BulkBar")
+        bulk_layout = QHBoxLayout(self.bulk_bar)
+        bulk_layout.setContentsMargins(12, 10, 12, 10)
+        bulk_layout.setSpacing(8)
+        self.bulk_count_label = QLabel("0 recipients checked")
+        self.bulk_count_label.setObjectName("BulkCount")
+        bulk_copy_button = mark_button(QPushButton("Copy"), SECONDARY_BUTTON)
+        bulk_set_button = mark_button(QPushButton("Set Groups"), SECONDARY_BUTTON)
+        bulk_add_button = mark_button(QPushButton("Add to Group"), SECONDARY_BUTTON)
+        bulk_remove_button = mark_button(QPushButton("Remove from Group"), SECONDARY_BUTTON)
+        bulk_delete_button = mark_button(QPushButton("Delete"), DANGER_BUTTON)
+        bulk_copy_button.clicked.connect(self.copy_selected)
+        bulk_set_button.clicked.connect(self.batch_edit_checked)
+        bulk_add_button.clicked.connect(self.assign_checked_to_group)
+        bulk_remove_button.clicked.connect(self.remove_checked_from_current_group)
+        bulk_delete_button.clicked.connect(self.delete_selected)
+        bulk_layout.addWidget(self.bulk_count_label)
+        bulk_layout.addStretch(1)
+        bulk_layout.addWidget(bulk_copy_button)
+        bulk_layout.addWidget(bulk_add_button)
+        bulk_layout.addWidget(bulk_set_button)
+        bulk_layout.addWidget(bulk_remove_button)
+        bulk_layout.addWidget(bulk_delete_button)
 
-        layout = QVBoxLayout()
-        layout.addLayout(top)
-        layout.addWidget(self.table)
-        layout.addLayout(tools)
-        layout.addLayout(bottom)
-        layout.addWidget(copy_button)
+        workspace = QFrame()
+        workspace.setObjectName("Workspace")
+        workspace_layout = QVBoxLayout(workspace)
+        workspace_layout.setContentsMargins(14, 14, 14, 14)
+        workspace_layout.setSpacing(10)
+        workspace_layout.addLayout(workspace_heading)
+        workspace_layout.addLayout(filter_bar)
+        workspace_layout.addWidget(table_area, stretch=1)
+        workspace_layout.addLayout(table_tools)
+        workspace_layout.addWidget(self.bulk_bar)
 
-        main_layout = QHBoxLayout()
-        main_layout.addLayout(group_tools)
-        main_layout.addLayout(layout, stretch=1)
+        body = QHBoxLayout()
+        body.setContentsMargins(12, 12, 12, 12)
+        body.setSpacing(12)
+        body.addWidget(sidebar)
+        body.addWidget(workspace, stretch=1)
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(header)
+        main_layout.addLayout(body, stretch=1)
 
         root = QWidget()
+        root.setObjectName("AppRoot")
         root.setLayout(main_layout)
         self.setCentralWidget(root)
 
@@ -317,12 +421,12 @@ class MainWindow(QMainWindow):
         self.groups = collect_groups(self.recipients, self.groups)
         self._building_groups = True
         self.group_list.clear()
-        for label, value in [(ALL_RECIPIENTS_LABEL, ALL_RECIPIENTS)]:
+        for label, value in [(f"{ALL_RECIPIENTS_LABEL}  {group_recipient_count(self.recipients, ALL_RECIPIENTS)}", ALL_RECIPIENTS)]:
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, value)
             self.group_list.addItem(item)
         for group in self.groups:
-            item = QListWidgetItem(group)
+            item = QListWidgetItem(f"{group}  {group_recipient_count(self.recipients, group)}")
             item.setData(Qt.UserRole, group)
             self.group_list.addItem(item)
 
@@ -357,11 +461,15 @@ class MainWindow(QMainWindow):
             checked = QTableWidgetItem("")
             checked.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
             checked.setCheckState(Qt.Checked if recipient.get("selected") else Qt.Unchecked)
+            checked.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 0, checked)
             phone_item = QTableWidgetItem(format_phone_number(recipient.get("phone", ""), phone_format))
+            phone_font = phone_item.font()
+            phone_font.setBold(True)
+            phone_item.setFont(phone_font)
             phone_item.setToolTip(recipient.get("phone", ""))
             self.table.setItem(row, 1, phone_item)
-            group_item = QTableWidgetItem("; ".join(valid_recipient_groups(recipient, self.groups)))
+            group_item = QTableWidgetItem(group_display_text(valid_recipient_groups(recipient, self.groups)))
             group_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.table.setItem(row, 2, group_item)
             self.table.setItem(row, 3, QTableWidgetItem(recipient.get("notes", "")))
@@ -373,6 +481,10 @@ class MainWindow(QMainWindow):
         self.table.blockSignals(False)
         self.table.setUpdatesEnabled(True)
         self._building_table = False
+        self.table_stack.setCurrentWidget(self.table if indexes else self.empty_state)
+        empty_title, empty_subtitle = empty_state_message(query)
+        self.empty_title.setText(empty_title)
+        self.empty_subtitle.setText(empty_subtitle)
         self.update_counts()
 
     def table_item_changed(self, item: QTableWidgetItem) -> None:
@@ -645,8 +757,8 @@ class MainWindow(QMainWindow):
         if not indexes:
             QMessageBox.information(self, "Delete recipient", NO_CHECKED_RECIPIENTS_MESSAGE)
             return
-        answer = QMessageBox.question(self, "Delete recipient", f"Delete {len(indexes)} recipients?")
-        if answer != QMessageBox.Yes:
+        dialog = DeleteConfirmationDialog(len(indexes), self)
+        if dialog.exec() != DeleteConfirmationDialog.Accepted:
             return
         for index in sorted(indexes, reverse=True):
             del self.recipients[index]
@@ -872,7 +984,11 @@ class MainWindow(QMainWindow):
         group_count = len(self.scope_selection(SCOPE_GROUP).recipients)
         search_count = len(visible_indexes)
         duplicates = count_duplicate_phone_numbers(self.recipients)
-        group_label = ALL_RECIPIENTS_LABEL if current_group == ALL_RECIPIENTS else current_group
+        group_label = workspace_title(current_group)
+        self.workspace_title.setText(group_label)
+        self.workspace_meta.setText("1 recipient" if group_count == 1 else f"{group_count} recipients")
+        self.bulk_count_label.setText(checked_status_text(total_selected))
+        self.bulk_bar.setVisible(total_selected > 0)
         self.count_label.setText(
             f"Total recipients: {len(self.recipients)} | Current group ({group_label}): {group_count} | "
             f"Current search: {search_count} | Stored duplicates: {duplicates} | "

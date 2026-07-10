@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog
 
 from app.main import MainWindow
 from core.groups import DEFAULT_GROUP, checked_recipient_indexes
@@ -49,11 +49,12 @@ class SelectionActionTests(unittest.TestCase):
         window.refresh_table()
         window.table.clearSelection()
 
-        with patch("app.main.QMessageBox.question", return_value=QMessageBox.Yes) as question:
+        with patch("app.main.DeleteConfirmationDialog") as confirmation:
+            confirmation.Accepted = QDialog.Accepted
+            confirmation.return_value.exec.return_value = QDialog.Accepted
             window.delete_selected()
 
-        question.assert_called_once()
-        self.assertEqual(question.call_args.args[2], "Delete 2 recipients?")
+        confirmation.assert_called_once_with(2, window)
         self.assertEqual([recipient["phone"] for recipient in window.recipients], ["+16282222222"])
         self.assertEqual(checked_recipient_indexes(window.recipients), [])
 
@@ -62,12 +63,12 @@ class SelectionActionTests(unittest.TestCase):
         self.addCleanup(window.close)
         window.table.selectRow(0)
 
-        with patch("app.main.QMessageBox.information") as information, patch("app.main.QMessageBox.question") as question:
+        with patch("app.main.QMessageBox.information") as information, patch("app.main.DeleteConfirmationDialog") as confirmation:
             window.delete_selected()
 
         information.assert_called_once()
         self.assertEqual(information.call_args.args[2], "No recipients are checked. Select one or more recipients in the Select column, then try again.")
-        question.assert_not_called()
+        confirmation.assert_not_called()
         self.assertEqual([recipient["phone"] for recipient in window.recipients], ["+14151111111", "+16282222222", "+17073333333"])
 
 

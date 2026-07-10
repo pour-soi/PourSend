@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -15,10 +16,22 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
+    QHeaderView,
 )
 from PySide6.QtCore import Qt
 
+from app.theme import DANGER_BUTTON, PRIMARY_BUTTON, mark_button
 from core.importing import PastePreviewRow, invalid_examples, preview_pasted_recipients, preview_summary
+
+
+def add_dialog_header(layout: QVBoxLayout, title: str, description: str) -> None:
+    title_label = QLabel(title)
+    title_label.setObjectName("SectionTitle")
+    description_label = QLabel(description)
+    description_label.setObjectName("MutedText")
+    description_label.setWordWrap(True)
+    layout.addWidget(title_label)
+    layout.addWidget(description_label)
 
 
 class PersonDialog(QDialog):
@@ -32,6 +45,7 @@ class PersonDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("Recipient")
+        self.setMinimumWidth(460)
         self.phone_edit = QLineEdit(phone)
         selected_groups = [selected_group] if isinstance(selected_group, str) else selected_group
         self.group_list = QListWidget()
@@ -46,15 +60,22 @@ class PersonDialog(QDialog):
         self.notes_edit.setFixedHeight(90)
 
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setVerticalSpacing(10)
         form.addRow("Phone number", self.phone_edit)
         form.addRow("Groups", self.group_list)
         form.addRow("Notes", self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Save")
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        add_dialog_header(layout, "Recipient", "Add or edit a phone number, notes, and group memberships.")
         layout.addLayout(form)
         layout.addWidget(buttons)
 
@@ -66,7 +87,8 @@ class PersonDialog(QDialog):
 class BatchEditDialog(QDialog):
     def __init__(self, parent=None, groups: list[str] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Batch Edit")
+        self.setWindowTitle("Set Groups")
+        self.setMinimumWidth(420)
         self.change_group = QCheckBox("Change group")
         self.group_combo = QComboBox()
         for group in groups or []:
@@ -76,14 +98,20 @@ class BatchEditDialog(QDialog):
         self.notes_edit.setFixedHeight(90)
 
         form = QFormLayout()
+        form.setVerticalSpacing(10)
         form.addRow(self.change_group, self.group_combo)
         form.addRow(self.change_notes, self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Apply")
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        add_dialog_header(layout, "Set Groups", "Apply group or notes changes to checked recipients.")
         layout.addLayout(form)
         layout.addWidget(buttons)
 
@@ -112,6 +140,7 @@ class PasteListDialog(QDialog):
         self.input.setPlaceholderText("Name, phone number\nName    phone number")
         self.preview = QTableWidget(0, 3)
         self.preview.setHorizontalHeaderLabels(["Original", "Normalized", "Status"])
+        self.preview.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.status = QLabel("Paste a list, then preview it before importing.")
         self.group_combo = QComboBox()
         for group in groups or []:
@@ -119,16 +148,22 @@ class PasteListDialog(QDialog):
         self.group_combo.currentIndexChanged.connect(self.refresh_preview)
 
         preview_button = QPushButton("Preview")
+        mark_button(preview_button)
         preview_button.clicked.connect(self.refresh_preview)
         existing_button = QPushButton("Show Existing")
+        mark_button(existing_button)
         existing_button.clicked.connect(self.show_existing)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Add All Recipients")
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+        add_dialog_header(layout, "Paste List", "Preview pasted numbers before adding new recipients or group memberships.")
         layout.addWidget(self.input)
         layout.addWidget(preview_button)
         layout.addWidget(existing_button)
@@ -207,6 +242,7 @@ class ImportPreviewDialog(QDialog):
 
         self.preview = QTableWidget(0, 3)
         self.preview.setHorizontalHeaderLabels(["Original", "Normalized", "Status"])
+        self.preview.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.group_combo = QComboBox()
         for group in groups or []:
             self.group_combo.addItem(group)
@@ -218,14 +254,19 @@ class ImportPreviewDialog(QDialog):
         self.status = QLabel(format_preview_status(self.preview_rows))
 
         existing_button = QPushButton("Show Existing")
+        mark_button(existing_button)
         existing_button.clicked.connect(self.show_existing)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Import Added Recipients")
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+        add_dialog_header(layout, "Import Preview", "Review import results before changing recipients.")
         layout.addWidget(self.preview)
         layout.addWidget(existing_button)
         layout.addWidget(QLabel("Group for new recipients"))
@@ -315,14 +356,20 @@ class ExportDialog(QDialog):
             self.scope_combo.addItem(f"{label} ({count})", value)
 
         form = QFormLayout()
+        form.setVerticalSpacing(10)
         form.addRow("Format", self.format_combo)
         form.addRow("Scope", self.scope_combo)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Export")
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        add_dialog_header(layout, "Export Recipients", "Choose the file format and recipient scope.")
         layout.addLayout(form)
         layout.addWidget(buttons)
 
@@ -340,17 +387,47 @@ class CsvColumnDialog(QDialog):
         self.phone_combo.addItems(columns)
 
         form = QFormLayout()
+        form.setVerticalSpacing(10)
         form.addRow("Name column", self.name_combo)
         form.addRow("Phone column", self.phone_combo)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Choose which columns contain each value."))
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        add_dialog_header(layout, "Choose CSV Columns", "Choose which columns contain each value.")
         layout.addLayout(form)
         layout.addWidget(buttons)
 
     def values(self) -> tuple[str, str]:
         return self.name_combo.currentText(), self.phone_combo.currentText()
+
+
+class DeleteConfirmationDialog(QDialog):
+    def __init__(self, count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Delete recipients")
+        self.setMinimumWidth(380)
+
+        surface = QFrame()
+        surface.setObjectName("DialogSurface")
+        surface_layout = QVBoxLayout(surface)
+        surface_layout.setContentsMargins(16, 16, 16, 16)
+        surface_layout.setSpacing(12)
+        noun = "recipient" if count == 1 else "recipients"
+        add_dialog_header(surface_layout, "Delete recipients", f"Delete {count} {noun}? This cannot be undone.")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
+        buttons.button(QDialogButtonBox.Ok).setText("Delete")
+        mark_button(buttons.button(QDialogButtonBox.Ok), DANGER_BUTTON)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        surface_layout.addWidget(buttons)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.addWidget(surface)
