@@ -37,19 +37,56 @@ def normalize_recipient_groups(recipient: dict) -> list[str]:
         groups = [groups]
     if not isinstance(groups, list):
         groups = []
-    return normalize_group_names(groups)
+    names = normalize_group_names(groups)
+    legacy_group = str(recipient.get("group", "")).strip()
+    if legacy_group:
+        names = normalize_group_names([*names, legacy_group])
+    return names
+
+
+def valid_recipient_groups(recipient: dict, groups: Iterable[str] = ()) -> list[str]:
+    available_names = normalize_group_names(groups)
+    available = ensure_default_group(available_names)
+    memberships = [
+        group for group in normalize_recipient_groups(recipient)
+        if not available_names or group in available
+    ]
+    if not memberships:
+        memberships = [DEFAULT_GROUP]
+    return normalize_group_names(memberships)
 
 
 def normalize_recipient_group(recipient: dict, groups: Iterable[str] = ()) -> str:
-    available_names = normalize_group_names(groups)
-    available = ensure_default_group(available_names)
-    group = str(recipient.get("group", "")).strip()
-    if not group:
-        memberships = normalize_recipient_groups(recipient)
-        group = memberships[0] if memberships else DEFAULT_GROUP
-    if available_names and group not in available:
-        group = DEFAULT_GROUP
-    return group
+    return valid_recipient_groups(recipient, groups)[0]
+
+
+def set_recipient_groups(recipient: dict, groups: Iterable[str]) -> None:
+    memberships = normalize_group_names(groups) or [DEFAULT_GROUP]
+    recipient["groups"] = memberships
+    recipient["group"] = memberships[0]
+
+
+def add_recipient_group(recipient: dict, group: str) -> bool:
+    clean_group = group.strip()
+    if not clean_group:
+        return False
+    memberships = valid_recipient_groups(recipient)
+    if clean_group in memberships:
+        return False
+    if memberships == [DEFAULT_GROUP] and clean_group != DEFAULT_GROUP:
+        memberships = []
+    set_recipient_groups(recipient, [*memberships, clean_group])
+    return True
+
+
+def remove_recipient_group(recipient: dict, group: str) -> bool:
+    clean_group = group.strip()
+    memberships = valid_recipient_groups(recipient)
+    if clean_group not in memberships:
+        return False
+    remaining = [name for name in memberships if name != clean_group]
+    set_recipient_groups(recipient, remaining or [DEFAULT_GROUP])
+    return True
 
 
 def recipient_phone_key(recipient: dict) -> str:
@@ -94,11 +131,11 @@ def normalize_recipients(recipients: Iterable[dict], groups: Iterable[str] = ())
             item["phone"] = normalized_phone
         item["selected"] = bool(item.get("selected", False))
         item["notes"] = str(item.get("notes", ""))
-        group = normalize_recipient_group(item, available_groups)
-        item["group"] = group
-        item["groups"] = [group]
+        memberships = valid_recipient_groups(item, available_groups)
+        set_recipient_groups(item, memberships)
         if key and key in seen_numbers:
             existing = normalized[seen_numbers[key]]
+            set_recipient_groups(existing, [*valid_recipient_groups(existing), *memberships])
             existing["selected"] = bool(existing.get("selected")) or item["selected"]
             if not existing.get("name") and item.get("name"):
                 existing["name"] = item["name"]
@@ -135,26 +172,20 @@ def rename_group(recipients: list[dict], groups: list[str], old_name: str, new_n
     if clean_name != old_name and clean_name in groups:
         return False
 
-    old_members = [
-        index for index, recipient in enumerate(recipients) if normalize_recipient_group(recipient, groups) == old_name
-    ]
     groups[groups.index(old_name)] = clean_name
-    for index in old_members:
-        recipients[index]["group"] = clean_name
-        recipients[index]["groups"] = [clean_name]
+    for recipient in recipients:
+        memberships = [clean_name if group == old_name else group for group in valid_recipient_groups(recipient)]
+        set_recipient_groups(recipient, memberships)
     return True
 
 
 def delete_group(recipients: list[dict], groups: list[str], name: str) -> bool:
     if name == DEFAULT_GROUP or name not in groups:
         return False
-    old_members = [
-        index for index, recipient in enumerate(recipients) if normalize_recipient_group(recipient, groups) == name
-    ]
     groups.remove(name)
-    for index in old_members:
-        recipients[index]["group"] = DEFAULT_GROUP
-        recipients[index]["groups"] = [DEFAULT_GROUP]
+    for recipient in recipients:
+        if name in valid_recipient_groups(recipient):
+            remove_recipient_group(recipient, name)
     return True
 
 
@@ -164,22 +195,19 @@ def assign_to_group(recipients: list[dict], indexes: Iterable[int], group: str) 
         return
     for index in indexes:
         if 0 <= index < len(recipients):
-            recipients[index]["group"] = clean_group
-            recipients[index]["groups"] = [clean_group]
+            add_recipient_group(recipients[index], clean_group)
 
 
 def remove_from_group(recipients: list[dict], indexes: Iterable[int], group: str) -> None:
     for index in indexes:
         if 0 <= index < len(recipients):
-            if normalize_recipient_group(recipients[index]) == group:
-                recipients[index]["group"] = DEFAULT_GROUP
-                recipients[index]["groups"] = [DEFAULT_GROUP]
+            remove_recipient_group(recipients[index], group)
 
 
 def recipient_matches_group(recipient: dict, group_filter: str) -> bool:
     if group_filter == ALL_RECIPIENTS:
         return True
-    return normalize_recipient_group(recipient) == group_filter
+    return group_filter in valid_recipient_groups(recipient)
 
 
 def recipient_matches_search(recipient: dict, query: str = "", phone_format: str = "e164") -> bool:
@@ -190,7 +218,7 @@ def recipient_matches_search(recipient: dict, query: str = "", phone_format: str
     phone = str(recipient.get("phone", ""))
     normalized, status = normalize_us_phone(phone)
     display_phone = format_phone_number(phone, phone_format)
-    group = normalize_recipient_group(recipient)
+    group = "; ".join(valid_recipient_groups(recipient))
     notes = str(recipient.get("notes", ""))
     text_values = [display_phone, normalized if status == "Valid" else phone, group, notes]
     if any(search in value.lower() for value in text_values):
@@ -211,7 +239,7 @@ def sorted_recipient_indexes(
         return sorted(by_position, key=lambda index: recipient_phone_key(recipients[index]), reverse=descending)
     if sort_field == SORT_GROUP:
         by_position = sorted(indexes)
-        return sorted(by_position, key=lambda index: normalize_recipient_group(recipients[index]).lower(), reverse=descending)
+        return sorted(by_position, key=lambda index: "; ".join(valid_recipient_groups(recipients[index])).lower(), reverse=descending)
     return sorted(indexes, reverse=descending)
 
 
@@ -267,8 +295,7 @@ def batch_update_recipients(
         if group is not None:
             clean_group = group.strip()
             if clean_group:
-                recipients[index]["group"] = clean_group
-                recipients[index]["groups"] = [clean_group]
+                set_recipient_groups(recipients[index], [clean_group])
         if notes is not None:
             recipients[index]["notes"] = notes.strip()
         updated += 1

@@ -38,6 +38,13 @@ class ExportingTests(unittest.TestCase):
 
         self.assertEqual([row["phone"] for row in selection.recipients], ["+14151111111", "+16282222222", "+17073333333"])
 
+    def test_export_scope_all_deduplicates_by_phone_number(self):
+        self.recipients.append(recipient("415-111-1111", "Follow-up", "duplicate", True))
+
+        selection = resolve_recipient_scope(self.recipients, SCOPE_ALL)
+
+        self.assertEqual([row["phone"] for row in selection.recipients], ["+14151111111", "+16282222222", "+17073333333"])
+
     def test_export_scope_current_group(self):
         selection = resolve_recipient_scope(self.recipients, SCOPE_GROUP, group_filter="Caregivers")
 
@@ -65,28 +72,37 @@ class ExportingTests(unittest.TestCase):
 
         self.assertEqual([row["phone"] for row in selection.recipients], ["+17073333333", "+14151111111"])
 
+    def test_export_scope_current_selection_deduplicates_by_phone_number(self):
+        self.recipients.append(recipient("415-111-1111", "Follow-up", "duplicate", True))
+
+        selection = resolve_recipient_scope(self.recipients, SCOPE_SELECTION, group_filter=ALL_RECIPIENTS)
+
+        self.assertEqual([row["phone"] for row in selection.recipients], ["+14151111111", "+17073333333"])
+
     def test_txt_export_uses_display_format_and_scope(self):
         text = export_txt(self.recipients[:2], PHONE_FORMAT_DASHES)
 
         self.assertEqual(text, "415-111-1111\n628-222-2222")
 
     def test_csv_export_has_headers_rows_and_escaping(self):
+        self.recipients[0]["groups"] = ["Caregivers", "Follow-up"]
         text = export_csv(self.recipients, PHONE_FORMAT_DASHES)
         rows = list(csv.reader(io.StringIO(text)))
 
         self.assertEqual(rows[0], ["Phone Number", "Group", "Notes"])
-        self.assertEqual(rows[1], ["415-111-1111", "Caregivers", "needs, comma"])
+        self.assertEqual(rows[1], ["415-111-1111", "Caregivers; Follow-up", "needs, comma"])
         self.assertEqual(rows[2], ["628-222-2222", "Caregivers", 'quote "here"'])
         self.assertEqual(rows[3], ["707-333-3333", "Follow-up", "line\nbreak"])
 
     def test_xlsx_export_is_valid_with_headers_and_rows(self):
+        self.recipients[0]["groups"] = ["Caregivers", "Follow-up"]
         content = export_xlsx_bytes(self.recipients[:1], PHONE_FORMAT_DASHES)
 
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             sheet = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
 
         values = [node.text for node in sheet.findall(".//{*}t")]
-        self.assertEqual(values, ["Phone Number", "Group", "Notes", "415-111-1111", "Caregivers", "needs, comma"])
+        self.assertEqual(values, ["Phone Number", "Group", "Notes", "415-111-1111", "Caregivers; Follow-up", "needs, comma"])
 
     def test_backup_export_preserves_canonical_data_and_settings(self):
         data = json.loads(backup_json(self.recipients, ["Caregivers", "Follow-up"], {"phone_format": PHONE_FORMAT_DASHES}))

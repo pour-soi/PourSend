@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from html import escape
 
 from app.storage import make_saved_data, parse_saved_data, parse_saved_settings
-from core.groups import ALL_RECIPIENTS, filtered_recipient_indexes, normalize_recipient_group
+from core.groups import ALL_RECIPIENTS, filtered_recipient_indexes, valid_recipient_groups
 from core.phone import PHONE_FORMAT_E164, format_phone_number, normalize_us_phone
 
 
@@ -57,7 +57,21 @@ def resolve_recipient_scope(
 
     if not indexes:
         return ExportSelection([], "No recipients match that scope.")
-    return ExportSelection([recipients[index] for index in indexes])
+    return ExportSelection(_dedupe_recipients([recipients[index] for index in indexes]))
+
+
+def _dedupe_recipients(recipients: list[dict]) -> list[dict]:
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for recipient in recipients:
+        normalized, status = normalize_us_phone(str(recipient.get("phone", "")))
+        key = normalized if status == "Valid" else str(recipient.get("phone", "")).strip()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        deduped.append(recipient)
+    return deduped
 
 
 def format_copy_number(phone: str, copy_mode: str, display_format: str) -> str:
@@ -100,7 +114,7 @@ def export_csv(recipients: list[dict], display_format: str) -> str:
     for recipient in recipients:
         writer.writerow([
             format_phone_number(str(recipient.get("phone", "")), display_format),
-            normalize_recipient_group(recipient),
+            "; ".join(valid_recipient_groups(recipient)),
             str(recipient.get("notes", "")),
         ])
     return output.getvalue()
@@ -111,7 +125,7 @@ def export_xlsx_bytes(recipients: list[dict], display_format: str) -> bytes:
     rows.extend(
         [
             format_phone_number(str(recipient.get("phone", "")), display_format),
-            normalize_recipient_group(recipient),
+            "; ".join(valid_recipient_groups(recipient)),
             str(recipient.get("notes", "")),
         ]
         for recipient in recipients

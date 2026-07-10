@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -20,23 +22,32 @@ from core.importing import PastePreviewRow, invalid_examples, preview_pasted_rec
 
 
 class PersonDialog(QDialog):
-    def __init__(self, parent=None, phone: str = "", groups: list[str] | None = None, selected_group: str = "", notes: str = ""):
+    def __init__(
+        self,
+        parent=None,
+        phone: str = "",
+        groups: list[str] | None = None,
+        selected_group: str | list[str] = "",
+        notes: str = "",
+    ):
         super().__init__(parent)
         self.setWindowTitle("Recipient")
         self.phone_edit = QLineEdit(phone)
-        self.group_combo = QComboBox()
+        selected_groups = [selected_group] if isinstance(selected_group, str) else selected_group
+        self.group_list = QListWidget()
+        self.group_list.setSelectionMode(QListWidget.MultiSelection)
         for group in groups or []:
-            self.group_combo.addItem(group)
-        if selected_group:
-            index = self.group_combo.findText(selected_group)
-            if index >= 0:
-                self.group_combo.setCurrentIndex(index)
+            item = QListWidgetItem(group)
+            self.group_list.addItem(item)
+            if group in selected_groups:
+                item.setSelected(True)
+        self.group_list.setFixedHeight(110)
         self.notes_edit = QTextEdit(notes)
         self.notes_edit.setFixedHeight(90)
 
         form = QFormLayout()
         form.addRow("Phone number", self.phone_edit)
-        form.addRow("Group", self.group_combo)
+        form.addRow("Groups", self.group_list)
         form.addRow("Notes", self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -47,8 +58,9 @@ class PersonDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
-    def values(self) -> tuple[str, str, str]:
-        return self.phone_edit.text().strip(), self.group_combo.currentText().strip(), self.notes_edit.toPlainText().strip()
+    def values(self) -> tuple[str, list[str], str]:
+        groups = [item.text().strip() for item in self.group_list.selectedItems()]
+        return self.phone_edit.text().strip(), groups, self.notes_edit.toPlainText().strip()
 
 
 class BatchEditDialog(QDialog):
@@ -85,7 +97,7 @@ class PasteListDialog(QDialog):
     def __init__(
         self,
         parent=None,
-        existing_numbers: set[str] | None = None,
+        existing_numbers: set[str] | dict[str, list[str]] | None = None,
         groups: list[str] | None = None,
         jump_to_existing=None,
     ):
@@ -104,6 +116,7 @@ class PasteListDialog(QDialog):
         self.group_combo = QComboBox()
         for group in groups or []:
             self.group_combo.addItem(group)
+        self.group_combo.currentIndexChanged.connect(self.refresh_preview)
 
         preview_button = QPushButton("Preview")
         preview_button.clicked.connect(self.refresh_preview)
@@ -126,7 +139,11 @@ class PasteListDialog(QDialog):
         layout.addWidget(buttons)
 
     def refresh_preview(self) -> None:
-        self.preview_rows = preview_pasted_recipients(self.input.toPlainText(), self.existing_numbers)
+        self.preview_rows = preview_pasted_recipients(
+            self.input.toPlainText(),
+            self.existing_numbers,
+            self.selected_group(),
+        )
         self.preview.setRowCount(0)
         for row_data in self.preview_rows:
             row = self.preview.rowCount()
@@ -148,14 +165,14 @@ class PasteListDialog(QDialog):
             super().accept()
 
     def rows_to_add(self) -> list[PastePreviewRow]:
-        return [row for row in self.preview_rows if row.status == "Valid"]
+        return [row for row in self.preview_rows if row.status in {"New Recipient", "Added to Group", "Valid", "Add to group"}]
 
     def selected_group(self) -> str:
         return self.group_combo.currentText().strip()
 
-    def summary_counts(self) -> tuple[int, int, int, int]:
+    def summary_counts(self) -> tuple[int, int, int, int, int]:
         summary = preview_summary(self.preview_rows)
-        return summary.added, summary.duplicates, summary.already_exists, summary.invalid
+        return summary.added, summary.added_to_group, summary.duplicates, summary.already_exists, summary.invalid
 
     def invalid_examples(self, limit: int = 5) -> list[str]:
         return invalid_examples(self.preview_rows, limit)
@@ -167,7 +184,7 @@ class PasteListDialog(QDialog):
         if row < 0 or row >= len(self.preview_rows):
             return
         preview_row = self.preview_rows[row]
-        if preview_row.status == "Already exists" and preview_row.normalized:
+        if preview_row.status in {"Already exists", "Already in Group", "Added to Group", "Already in group", "Add to group"} and preview_row.normalized:
             self.jump_to_existing(preview_row.normalized)
 
 
@@ -179,12 +196,14 @@ class ImportPreviewDialog(QDialog):
         groups: list[str] | None = None,
         selected_group: str = "",
         jump_to_existing=None,
+        refresh_rows=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Import Preview")
         self.resize(760, 520)
         self.preview_rows = rows or []
         self.jump_to_existing = jump_to_existing
+        self.refresh_rows = refresh_rows
 
         self.preview = QTableWidget(0, 3)
         self.preview.setHorizontalHeaderLabels(["Original", "Normalized", "Status"])
@@ -195,6 +214,7 @@ class ImportPreviewDialog(QDialog):
             index = self.group_combo.findText(selected_group)
             if index >= 0:
                 self.group_combo.setCurrentIndex(index)
+        self.group_combo.currentIndexChanged.connect(self.refresh_for_group)
         self.status = QLabel(format_preview_status(self.preview_rows))
 
         existing_button = QPushButton("Show Existing")
@@ -214,6 +234,12 @@ class ImportPreviewDialog(QDialog):
         layout.addWidget(buttons)
         self.refresh_preview()
 
+    def refresh_for_group(self) -> None:
+        if self.refresh_rows is not None:
+            self.preview_rows = self.refresh_rows(self.selected_group())
+        self.status.setText(format_preview_status(self.preview_rows))
+        self.refresh_preview()
+
     def refresh_preview(self) -> None:
         self.preview.setRowCount(0)
         for row_data in self.preview_rows:
@@ -230,14 +256,14 @@ class ImportPreviewDialog(QDialog):
         self.preview.resizeColumnsToContents()
 
     def rows_to_add(self) -> list[PastePreviewRow]:
-        return [row for row in self.preview_rows if row.status == "Valid"]
+        return [row for row in self.preview_rows if row.status in {"New Recipient", "Added to Group", "Valid", "Add to group"}]
 
     def selected_group(self) -> str:
         return self.group_combo.currentText().strip()
 
-    def summary_counts(self) -> tuple[int, int, int, int]:
+    def summary_counts(self) -> tuple[int, int, int, int, int]:
         summary = preview_summary(self.preview_rows)
-        return summary.added, summary.duplicates, summary.already_exists, summary.invalid
+        return summary.added, summary.added_to_group, summary.duplicates, summary.already_exists, summary.invalid
 
     def invalid_examples(self, limit: int = 5) -> list[str]:
         return invalid_examples(self.preview_rows, limit)
@@ -249,7 +275,7 @@ class ImportPreviewDialog(QDialog):
         if row < 0 or row >= len(self.preview_rows):
             return
         preview_row = self.preview_rows[row]
-        if preview_row.status == "Already exists" and preview_row.normalized:
+        if preview_row.status in {"Already exists", "Already in Group", "Added to Group", "Already in group", "Add to group"} and preview_row.normalized:
             self.jump_to_existing(preview_row.normalized)
 
 
@@ -257,9 +283,10 @@ def format_preview_status(rows: list[PastePreviewRow]) -> str:
     summary = preview_summary(rows)
     lines = [
         f"Extracted: {summary.extracted}",
-        f"Added: {summary.added}",
-        f"Already Exists: {summary.already_exists}",
-        f"Duplicates: {summary.duplicates}",
+        f"New Recipients: {summary.added}",
+        f"Added to Group: {summary.added_to_group}",
+        f"Already in Group: {summary.already_exists}",
+        f"Duplicates in Input: {summary.duplicates}",
         f"Invalid: {summary.invalid}",
     ]
     examples = invalid_examples(rows)

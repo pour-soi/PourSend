@@ -74,6 +74,28 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(recipients[0]["group"], "Caregivers")
         self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [0])
 
+    def test_recipient_can_belong_to_multiple_groups(self):
+        recipients, groups = parse_saved_data(
+            [{"phone": raw_phone(), "group": "Caregivers", "groups": ["Caregivers", "Follow-up"]}]
+        )
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers", "Follow-up"])
+        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Follow-up"])
+        self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [0])
+        self.assertEqual(filtered_recipient_indexes(recipients, "Follow-up"), [0])
+        self.assertEqual(filtered_recipient_indexes(recipients, ALL_RECIPIENTS), [0])
+
+    def test_saved_groups_field_memberships_are_preserved_when_group_list_is_incomplete(self):
+        data = {
+            "groups": ["Caregivers"],
+            "recipients": [{"phone": raw_phone(), "groups": ["Caregivers", "Follow-up", "Follow-up"]}],
+        }
+
+        recipients, groups = parse_saved_data(data)
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers", "Follow-up"])
+        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Follow-up"])
+
     def test_missing_saved_group_falls_back_to_default(self):
         data = {
             "groups": ["Caregivers"],
@@ -96,6 +118,7 @@ class GroupTests(unittest.TestCase):
 
         self.assertEqual(len(recipients), 1)
         self.assertEqual(recipients[0]["group"], "Caregivers")
+        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Job Seekers"])
 
     def test_duplicate_phone_migration_merges_non_identity_fields(self):
         recipients = normalize_recipients(
@@ -126,13 +149,15 @@ class GroupTests(unittest.TestCase):
 
     def test_group_rename_updates_memberships(self):
         recipients = sample_recipients()
+        recipients[0]["groups"] = ["Caregivers", "Follow-up"]
         groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
 
-        self.assertTrue(rename_group(recipients, groups, "Caregivers", "Follow-up"))
+        self.assertTrue(rename_group(recipients, groups, "Caregivers", "Family"))
 
-        self.assertEqual(groups, [DEFAULT_GROUP, "Follow-up", "Job Seekers"])
-        self.assertEqual(recipients[0]["group"], "Follow-up")
-        self.assertEqual(filtered_recipient_indexes(recipients, "Follow-up"), [0])
+        self.assertEqual(groups, [DEFAULT_GROUP, "Family", "Job Seekers"])
+        self.assertEqual(recipients[0]["group"], "Family")
+        self.assertEqual(recipients[0]["groups"], ["Family", "Follow-up"])
+        self.assertEqual(filtered_recipient_indexes(recipients, "Family"), [0])
 
     def test_group_rename_rejects_default_empty_and_duplicate(self):
         recipients = sample_recipients()
@@ -144,14 +169,16 @@ class GroupTests(unittest.TestCase):
 
     def test_group_delete_moves_recipients_to_default(self):
         recipients = sample_recipients()
+        recipients[0]["groups"] = ["Caregivers", "Follow-up"]
         groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
 
         self.assertTrue(delete_group(recipients, groups, "Caregivers"))
 
         self.assertEqual(len(recipients), 3)
         self.assertEqual(groups, [DEFAULT_GROUP, "Job Seekers"])
-        self.assertEqual(recipients[0]["group"], DEFAULT_GROUP)
-        self.assertEqual(filtered_recipient_indexes(recipients, DEFAULT_GROUP), [0, 2])
+        self.assertEqual(recipients[0]["group"], "Follow-up")
+        self.assertEqual(recipients[0]["groups"], ["Follow-up"])
+        self.assertEqual(filtered_recipient_indexes(recipients, DEFAULT_GROUP), [2])
 
     def test_default_group_cannot_be_deleted(self):
         recipients = sample_recipients()
@@ -344,8 +371,8 @@ class GroupTests(unittest.TestCase):
 
         assign_to_group(recipients, [0, 2], "Follow-up")
 
-        self.assertEqual(recipients[0]["group"], "Follow-up")
-        self.assertEqual(recipients[2]["group"], "Follow-up")
+        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Follow-up"])
+        self.assertEqual(recipients[2]["groups"], ["Follow-up"])
         self.assertEqual(recipients[0]["notes"], "morning")
 
     def test_batch_update_recipients_updates_group_and_notes(self):
@@ -372,6 +399,22 @@ class GroupTests(unittest.TestCase):
 
         self.assertEqual(normalize_recipient_group(recipients[0]), DEFAULT_GROUP)
         self.assertEqual(filtered_recipient_indexes(recipients, "Caregivers"), [])
+
+    def test_remove_from_one_group_preserves_other_memberships(self):
+        recipients = sample_recipients()
+        recipients[0]["groups"] = ["Caregivers", "Follow-up"]
+
+        remove_from_group(recipients, [0], "Caregivers")
+
+        self.assertEqual(recipients[0]["groups"], ["Follow-up"])
+        self.assertEqual(filtered_recipient_indexes(recipients, "Follow-up"), [0])
+
+    def test_removing_last_group_falls_back_to_default(self):
+        recipients = sample_recipients()
+
+        remove_from_group(recipients, [0], "Caregivers")
+
+        self.assertEqual(recipients[0]["groups"], [DEFAULT_GROUP])
 
     def test_invalid_filter_state_recovers_after_group_deletion(self):
         recipients = sample_recipients()

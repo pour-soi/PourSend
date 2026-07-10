@@ -7,12 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
-from .groups import DEFAULT_GROUP
+from .groups import DEFAULT_GROUP, add_recipient_group, find_recipient_index_by_phone, remove_recipient_group
 from .phone import normalize_us_phone
 
 
 NAME_COLUMNS = {"name", "full_name", "fullname", "contact", "contact_name"}
 PHONE_COLUMNS = {"phone", "phone_number", "phonenumber", "mobile", "cell", "cell_phone"}
+STATUS_NEW_RECIPIENT = "New Recipient"
+STATUS_ADD_TO_GROUP = "Added to Group"
+STATUS_ALREADY_EXISTS = "Already exists"
+STATUS_ALREADY_IN_GROUP = "Already in Group"
+STATUS_DUPLICATE_INPUT = "Duplicate in Input"
+STATUS_INVALID = "Invalid"
 PHONE_AT_END_RE = re.compile(r"(?P<phone>\+?[\d(][\d\s().-]{6,})\s*$")
 PHONE_CHARS_RE = re.compile(r"^[\d\s().+\-]+$")
 PHONE_EXTRACT_RE = re.compile(
@@ -46,19 +52,22 @@ class PastePreviewRow:
 class ImportPreviewSummary:
     extracted: int
     added: int
+    added_to_group: int
     already_exists: int
     duplicates: int
     invalid: int
 
 
 def preview_summary(rows: list[PastePreviewRow]) -> ImportPreviewSummary:
-    added = sum(1 for row in rows if row.status == "Valid")
-    already_exists = sum(1 for row in rows if row.status == "Already exists")
-    duplicates = sum(1 for row in rows if row.status == "Duplicate in this batch")
-    invalid = sum(1 for row in rows if row.status == "Invalid")
+    added = sum(1 for row in rows if row.status in {STATUS_NEW_RECIPIENT, "Valid"})
+    added_to_group = sum(1 for row in rows if row.status in {STATUS_ADD_TO_GROUP, "Add to group"})
+    already_exists = sum(1 for row in rows if row.status in {STATUS_ALREADY_EXISTS, STATUS_ALREADY_IN_GROUP, "Already in group"})
+    duplicates = sum(1 for row in rows if row.status in {STATUS_DUPLICATE_INPUT, "Duplicate in this batch", "Duplicate in input"})
+    invalid = sum(1 for row in rows if row.status == STATUS_INVALID)
     return ImportPreviewSummary(
-        extracted=added + already_exists + duplicates + invalid,
+        extracted=added + added_to_group + already_exists + duplicates + invalid,
         added=added,
+        added_to_group=added_to_group,
         already_exists=already_exists,
         duplicates=duplicates,
         invalid=invalid,
@@ -68,7 +77,7 @@ def preview_summary(rows: list[PastePreviewRow]) -> ImportPreviewSummary:
 def invalid_examples(rows: list[PastePreviewRow], limit: int = 5) -> list[str]:
     examples: list[str] = []
     for row in rows:
-        if row.status != "Invalid":
+        if row.status != STATUS_INVALID:
             continue
         location = f"{row.source}: " if row.source else ""
         examples.append(f"{location}{row.phone}")
@@ -95,8 +104,15 @@ def parse_pasted_list(text: str) -> tuple[list[ParsedRecipient], list[RejectedRo
     return accepted, rejected
 
 
-def preview_pasted_recipients(text: str, existing_numbers: set[str] | None = None) -> list[PastePreviewRow]:
+def preview_pasted_recipients(
+    text: str,
+    existing_numbers: set[str] | dict[str, list[str]] | None = None,
+    group: str = DEFAULT_GROUP,
+) -> list[PastePreviewRow]:
     existing = existing_numbers or set()
+    existing_groups = existing if isinstance(existing, dict) else {}
+    existing_set = set(existing_groups) if isinstance(existing, dict) else set(existing)
+    clean_group = group.strip() or DEFAULT_GROUP
     seen: set[str] = set()
     rows: list[PastePreviewRow] = []
 
@@ -107,13 +123,18 @@ def preview_pasted_recipients(text: str, existing_numbers: set[str] | None = Non
         for name, phone in _parse_preview_line(source):
             normalized, phone_status = normalize_us_phone(phone)
             if phone_status != "Valid":
-                status = "Invalid"
+                status = STATUS_INVALID
             elif normalized in seen:
-                status = "Duplicate in this batch"
-            elif normalized in existing:
-                status = "Already exists"
+                status = STATUS_DUPLICATE_INPUT
+            elif normalized in existing_set:
+                memberships = existing_groups.get(normalized, [])
+                if memberships:
+                    status = STATUS_ALREADY_IN_GROUP if clean_group in memberships else STATUS_ADD_TO_GROUP
+                else:
+                    status = STATUS_ALREADY_EXISTS
+                seen.add(normalized)
             else:
-                status = "Valid"
+                status = STATUS_NEW_RECIPIENT
                 seen.add(normalized)
             rows.append(
                 PastePreviewRow(
@@ -139,28 +160,57 @@ def rows_to_add(rows: list[PastePreviewRow], group: str = DEFAULT_GROUP) -> list
             "notes": "",
         }
         for row in rows
-        if row.status == "Valid"
+        if row.status in {STATUS_NEW_RECIPIENT, "Valid"}
     ]
 
 
-def remove_imported_numbers(recipients: list[dict], normalized_numbers: list[str]) -> int:
-    numbers = set(normalized_numbers)
+def add_import_rows(recipients: list[dict], rows: list[PastePreviewRow], group: str = DEFAULT_GROUP) -> list[dict]:
+    clean_group = group.strip() or DEFAULT_GROUP
+    actions: list[dict] = []
+    for recipient in rows_to_add(rows, clean_group):
+        recipients.append(recipient)
+        actions.append({"type": "created", "phone": recipient["phone"]})
+    for row in rows:
+        if row.status not in {STATUS_ADD_TO_GROUP, "Add to group"}:
+            continue
+        index = find_recipient_index_by_phone(recipients, row.normalized)
+        if index is not None and add_recipient_group(recipients[index], clean_group):
+            actions.append({"type": "membership", "phone": row.normalized, "group": clean_group})
+    return actions
+
+
+def remove_imported_numbers(recipients: list[dict], import_actions: list[str | dict]) -> int:
+    numbers = {action for action in import_actions if isinstance(action, str)}
+    numbers.update(action["phone"] for action in import_actions if isinstance(action, dict) and action.get("type") == "created")
+    memberships = [
+        action for action in import_actions
+        if isinstance(action, dict) and action.get("type") == "membership"
+    ]
+    removed_memberships = 0
+    for action in reversed(memberships):
+        index = find_recipient_index_by_phone(recipients, action.get("phone", ""))
+        if index is not None and remove_recipient_group(recipients[index], action.get("group", "")):
+            removed_memberships += 1
     before = len(recipients)
     recipients[:] = [
         recipient for recipient in recipients if str(recipient.get("phone", "")) not in numbers
     ]
-    return before - len(recipients)
+    return before - len(recipients) + removed_memberships
 
 
 def normalized_numbers_from_text(text: str) -> list[str]:
     return [
         row.normalized
         for row in preview_pasted_recipients(text)
-        if row.normalized and row.status in {"Valid", "Duplicate in this batch"}
+        if row.normalized and row.status in {STATUS_NEW_RECIPIENT, STATUS_DUPLICATE_INPUT, "Valid", "Duplicate in this batch", "Duplicate in input"}
     ]
 
 
-def preview_import_file(path: str | Path, existing_numbers: set[str] | None = None) -> list[PastePreviewRow]:
+def preview_import_file(
+    path: str | Path,
+    existing_numbers: set[str] | dict[str, list[str]] | None = None,
+    group: str = DEFAULT_GROUP,
+) -> list[PastePreviewRow]:
     source = Path(path)
     suffix = source.suffix.lower()
     try:
@@ -174,7 +224,7 @@ def preview_import_file(path: str | Path, existing_numbers: set[str] | None = No
             raise ValueError("Unsupported import file type")
     except (csv.Error, zipfile.BadZipFile, ElementTree.ParseError) as exc:
         raise ValueError(f"Could not read {suffix or 'file'} content") from exc
-    return preview_pasted_recipients(text, existing_numbers)
+    return preview_pasted_recipients(text, existing_numbers, group)
 
 
 def _parse_line(line: str) -> tuple[str, str] | None:

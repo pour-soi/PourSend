@@ -43,11 +43,31 @@ def parse_saved_data(data) -> tuple[list[dict], list[str]]:
     if isinstance(data, dict):
         raw_recipients = data.get("recipients", [])
         saved_groups = normalize_group_names(data.get("groups", []))
-        groups = ensure_default_group(saved_groups or collect_groups(raw_recipients))
+        group_source = (
+            [*saved_groups, *_collect_saved_membership_groups(raw_recipients)]
+            if saved_groups
+            else collect_groups(raw_recipients)
+        )
+        groups = ensure_default_group(group_source)
         recipients = normalize_recipients(raw_recipients, groups)
         return recipients, collect_groups(recipients, groups)
 
     raise ValueError("unexpected format")
+
+
+def _collect_saved_membership_groups(recipients) -> list[str]:
+    names: list[str] = []
+    if not isinstance(recipients, list):
+        return names
+    for recipient in recipients:
+        if not isinstance(recipient, dict):
+            continue
+        groups = recipient.get("groups", [])
+        if isinstance(groups, str):
+            names.append(groups)
+        elif isinstance(groups, list):
+            names.extend(str(group) for group in groups)
+    return normalize_group_names(names)
 
 
 def parse_saved_settings(data) -> dict:

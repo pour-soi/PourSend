@@ -6,6 +6,7 @@ from pathlib import Path
 from app.storage import make_export_data, make_saved_data, parse_saved_data, parse_saved_settings
 from core.groups import DEFAULT_GROUP, find_recipient_index_by_phone
 from core.importing import (
+    add_import_rows,
     invalid_examples,
     normalized_numbers_from_text,
     preview_import_file,
@@ -31,7 +32,7 @@ class BatchPasteTests(unittest.TestCase):
 
         self.assertEqual([row.phone for row in rows], [raw_phone(), raw_phone("628")])
         self.assertEqual([row.name for row in rows], ["None", "None"])
-        self.assertEqual([row.status for row in rows], ["Valid", "Valid"])
+        self.assertEqual([row.status for row in rows], ["New Recipient", "New Recipient"])
 
     def test_comma_separated_phone_numbers(self):
         rows = preview_pasted_recipients(f"{raw_phone()}, {raw_phone('628')}")
@@ -47,8 +48,8 @@ class BatchPasteTests(unittest.TestCase):
         rows = preview_pasted_recipients(f"Amy\t{raw_phone()}\nJohn\t{raw_phone('628')}")
 
         self.assertEqual([(row.name, row.phone, row.status) for row in rows], [
-            ("Amy", raw_phone(), "Valid"),
-            ("John", raw_phone("628"), "Valid"),
+            ("Amy", raw_phone(), "New Recipient"),
+            ("John", raw_phone("628"), "New Recipient"),
         ])
 
     def test_phone_numbers_containing_spaces_are_not_split(self):
@@ -69,7 +70,7 @@ class BatchPasteTests(unittest.TestCase):
         rows = preview_pasted_recipients(f"{raw_phone()}\n{normalized()}")
         recipients = rows_to_add(rows)
 
-        self.assertEqual([row.status for row in rows], ["Valid", "Duplicate in this batch"])
+        self.assertEqual([row.status for row in rows], ["New Recipient", "Duplicate in Input"])
         self.assertEqual(len(recipients), 1)
 
     def test_already_existing_recipient_is_detected(self):
@@ -141,7 +142,7 @@ class BatchPasteTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].name, "Amy")
         self.assertEqual(rows[0].normalized, normalized())
-        self.assertEqual(rows[0].status, "Valid")
+        self.assertEqual(rows[0].status, "New Recipient")
 
     def test_messy_text_with_multiple_phone_formats(self):
         text = (
@@ -159,7 +160,7 @@ class BatchPasteTests(unittest.TestCase):
             normalized("707"),
             normalized("925"),
         ])
-        self.assertEqual([row.status for row in rows], ["Valid", "Valid", "Valid", "Valid", "Valid"])
+        self.assertEqual([row.status for row in rows], ["New Recipient", "New Recipient", "New Recipient", "New Recipient", "New Recipient"])
 
     def test_pasted_names_and_phone_numbers_are_extracted(self):
         rows = preview_pasted_recipients(f"Amy {raw_phone()}\nJohn\t{raw_phone('628')}")
@@ -180,9 +181,9 @@ class BatchPasteTests(unittest.TestCase):
         )
 
         self.assertEqual([row.status for row in rows], [
-            "Valid",
-            "Duplicate in this batch",
-            "Duplicate in this batch",
+            "New Recipient",
+            "Duplicate in Input",
+            "Duplicate in Input",
         ])
 
     def test_invalid_non_phone_text_is_ignored(self):
@@ -243,6 +244,33 @@ class BatchPasteTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].normalized, normalized())
         self.assertEqual(rows[0].status, "Already exists")
+
+    def test_existing_number_can_be_added_to_second_group(self):
+        rows = preview_pasted_recipients(raw_phone(), {normalized(): ["Caregivers"]}, "Follow-up")
+
+        self.assertEqual(rows[0].status, "Added to Group")
+
+        recipients = [{"phone": normalized(), "group": "Caregivers", "groups": ["Caregivers"]}]
+        actions = add_import_rows(recipients, rows, "Follow-up")
+
+        self.assertEqual(actions, [{"type": "membership", "phone": normalized(), "group": "Follow-up"}])
+        self.assertEqual(recipients[0]["groups"], ["Caregivers", "Follow-up"])
+
+    def test_existing_number_in_same_group_is_reported(self):
+        rows = preview_pasted_recipients(raw_phone(), {normalized(): ["Caregivers"]}, "Caregivers")
+
+        self.assertEqual(rows[0].status, "Already in Group")
+        self.assertEqual(rows_to_add(rows, "Caregivers"), [])
+
+    def test_undo_last_import_removes_new_memberships(self):
+        recipients = [{"phone": normalized(), "group": "Caregivers", "groups": ["Caregivers"]}]
+        actions = [{"type": "membership", "phone": normalized(), "group": "Follow-up"}]
+        recipients[0]["groups"].append("Follow-up")
+
+        removed = remove_imported_numbers(recipients, actions)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(recipients[0]["groups"], ["Caregivers"])
 
     def test_required_single_number_formats(self):
         formats = [
@@ -324,9 +352,9 @@ class BatchPasteTests(unittest.TestCase):
             "+16282222222",
         ])
         self.assertEqual([row.status for row in rows], [
-            "Valid",
-            "Duplicate in this batch",
-            "Valid",
+            "New Recipient",
+            "Duplicate in Input",
+            "New Recipient",
         ])
 
     def test_csv_import_uses_shared_parser(self):
