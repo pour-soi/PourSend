@@ -6,7 +6,7 @@
 
 A local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying checked recipient numbers for manual use with RingCentral.
 
-[![Latest Release](https://img.shields.io/github/v/release/pour-soi/PourSend?label=latest%20release)](https://github.com/pour-soi/PourSend/releases/tag/v2.0.0)
+[![Latest Release](https://img.shields.io/github/v/release/pour-soi/PourSend?label=latest%20release)](https://github.com/pour-soi/PourSend/releases/tag/v2.1.1)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Tests](https://img.shields.io/badge/tests-140%20passing-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -21,9 +21,9 @@ This is an independent, unofficial utility and is not affiliated with or endorse
 
 ## Download
 
-**Current release: v2.0.0**
+**Current release: v2.1.1**
 
-1. Download `PourSend-v2.0.0-Windows.zip` from the [official v2.0.0 GitHub Release](https://github.com/pour-soi/PourSend/releases/tag/v2.0.0).
+1. Download `PourSend-v2.1.1-Windows.zip` from the [official v2.1.1 GitHub Release](https://github.com/pour-soi/PourSend/releases/tag/v2.1.1).
 2. Extract the zip.
 3. Run `PourSend.exe`.
 
