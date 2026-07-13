@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication, QLabel
 
 from app.main import LayoutMetrics, MainWindow
@@ -24,8 +25,11 @@ class LayoutStateTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = app()
 
-    def make_window(self, recipients: Optional[list[dict]] = None) -> MainWindow:
-        with patch("app.main.load_recipient_data", return_value=([], [DEFAULT_GROUP], {}, None)):
+    def make_window(self, recipients: Optional[list[dict]] = None, settings: Optional[dict] = None) -> MainWindow:
+        with (
+            patch("app.main.load_recipient_data", return_value=([], [DEFAULT_GROUP], settings or {}, None)),
+            patch("app.main.save_recipient_data", return_value=None),
+        ):
             window = MainWindow()
         window.recipients = recipients or []
         window.groups = [DEFAULT_GROUP]
@@ -88,6 +92,73 @@ class LayoutStateTests(unittest.TestCase):
         window.resize(1280, 720)
         window.arrange_filter_toolbar()
         self.assertEqual(window.filter_bar_columns, LayoutMetrics.FILTER_COLUMNS_MEDIUM)
+
+    def test_main_window_has_small_safety_minimum_size(self):
+        window = self.make_window([recipient("+14151111111")])
+        self.addCleanup(window.close)
+
+        self.assertLessEqual(window.minimumWidth(), 400)
+        self.assertLessEqual(window.minimumHeight(), 320)
+
+    def test_small_window_size_is_allowed(self):
+        window = self.make_window([recipient("+14151111111")])
+        self.addCleanup(window.close)
+
+        window.resize(600, 400)
+        self.app.processEvents()
+
+        self.assertLessEqual(window.width(), 620)
+        self.assertLessEqual(window.height(), 420)
+
+    def test_small_window_overflow_uses_scroll_area(self):
+        window = self.make_window([recipient("+14151111111")])
+        self.addCleanup(window.close)
+
+        window.resize(LayoutMetrics.MIN_WINDOW)
+        window.show()
+        self.app.processEvents()
+
+        self.assertIs(window.centralWidget(), window.main_scroll_area)
+        self.assertGreater(window.main_scroll_area.horizontalScrollBar().maximum(), 0)
+        self.assertGreater(window.main_scroll_area.verticalScrollBar().maximum(), 0)
+
+    def test_large_fixed_child_constraints_do_not_reset_window_minimum(self):
+        window = self.make_window([recipient("+14151111111")])
+        self.addCleanup(window.close)
+
+        self.assertNotEqual(window.minimumSize(), LayoutMetrics.DEFAULT_WINDOW)
+        self.assertLess(window.minimumWidth(), 720)
+        self.assertLess(window.minimumHeight(), 480)
+
+    def test_window_geometry_restores_from_settings(self):
+        settings = {"window_geometry": {"x": 20, "y": 30, "width": 720, "height": 480, "maximized": False}}
+        window = self.make_window(settings=settings)
+        self.addCleanup(window.close)
+
+        self.assertEqual(window.geometry().size(), LayoutMetrics.MIN_WINDOW.expandedTo(window.geometry().size()))
+        self.assertEqual(window.width(), 720)
+        self.assertEqual(window.height(), 480)
+
+    def test_offscreen_window_geometry_is_recentered(self):
+        settings = {"window_geometry": {"x": -50000, "y": -50000, "width": 720, "height": 480, "maximized": False}}
+        window = self.make_window(settings=settings)
+        self.addCleanup(window.close)
+
+        self.assertTrue(window.window_rect_intersects_visible_screen(window.geometry()))
+
+    def test_window_geometry_is_saved_without_minimized_state(self):
+        window = self.make_window([recipient("+14151111111")])
+        self.addCleanup(window.close)
+        window.setGeometry(QRect(25, 35, 720, 480))
+
+        with patch("app.main.save_recipient_data", return_value=None) as save_data:
+            window.save_window_geometry()
+
+        saved_settings = save_data.call_args.args[2]
+        self.assertEqual(saved_settings["window_geometry"]["width"], 720)
+        self.assertEqual(saved_settings["window_geometry"]["height"], 480)
+        self.assertIn("maximized", saved_settings["window_geometry"])
+        self.assertNotIn("minimized", saved_settings["window_geometry"])
 
 
 if __name__ == "__main__":

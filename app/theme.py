@@ -37,6 +37,13 @@ QWidget#AppRoot {
     background: #f3f7fc;
 }
 
+QScrollArea#MainScrollArea,
+QScrollArea#MainScrollArea > QWidget,
+QScrollArea#MainScrollArea > QWidget > QWidget {
+    background: #f3f7fc;
+    border: 0;
+}
+
 QFrame#Header,
 QFrame#Sidebar,
 QFrame#Workspace,

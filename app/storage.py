@@ -73,7 +73,11 @@ def _collect_saved_membership_groups(recipients) -> list[str]:
 def parse_saved_settings(data) -> dict:
     settings = default_settings()
     if isinstance(data, dict) and isinstance(data.get("settings"), dict):
-        settings["phone_format"] = normalize_phone_format(data["settings"].get("phone_format"))
+        raw_settings = data["settings"]
+        settings["phone_format"] = normalize_phone_format(raw_settings.get("phone_format"))
+        window_geometry = raw_settings.get("window_geometry")
+        if isinstance(window_geometry, dict):
+            settings["window_geometry"] = window_geometry
     return settings
 
 
@@ -83,6 +87,9 @@ def make_saved_data(recipients: list[dict], groups: list[str], settings: dict | 
     saved_settings = default_settings()
     if settings:
         saved_settings["phone_format"] = normalize_phone_format(settings.get("phone_format"))
+        window_geometry = settings.get("window_geometry")
+        if isinstance(window_geometry, dict):
+            saved_settings["window_geometry"] = window_geometry
     return {
         "version": 3,
         "settings": saved_settings,
@@ -100,10 +107,21 @@ def make_export_data(
     return data
 
 
+def write_default_data_file(path: Path) -> tuple[list[dict], list[str], dict, str | None]:
+    settings = default_settings()
+    data = make_saved_data([], [], settings)
+    try:
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError as exc:
+        return [], [], settings, f"Could not create local data file: {exc}"
+    recipients, groups = parse_saved_data(data)
+    return recipients, groups, settings, None
+
+
 def load_recipient_data() -> tuple[list[dict], list[str], dict, str | None]:
     path = data_path()
     if not path.exists():
-        return [], [], default_settings(), None
+        return write_default_data_file(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

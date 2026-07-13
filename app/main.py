@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QStyle,
@@ -96,7 +97,7 @@ BRAND_SELECTION = "#edf4ff"
 
 class LayoutMetrics:
     DEFAULT_WINDOW = QSize(1440, 900)
-    MIN_WINDOW = QSize(1280, 720)
+    MIN_WINDOW = QSize(360, 300)
     HEADER_MIN_HEIGHT = 104
     HEADER_MARGIN_X = 26
     HEADER_MARGIN_Y = 20
@@ -106,13 +107,13 @@ class LayoutMetrics:
     LOGO_SIZE = 92
     ICON_BUTTON_SIZE = 34
     ICON_SIZE = 18
-    SIDEBAR_MIN_WIDTH = 240
+    SIDEBAR_MIN_WIDTH = 168
     SIDEBAR_PREFERRED_WIDTH = 260
     SIDEBAR_MAX_WIDTH = 300
     SIDEBAR_PADDING = 18
     GROUP_ROW_MARGIN_X = 10
     LIST_ITEM_SPACING = 2
-    SEARCH_MIN_WIDTH = 260
+    SEARCH_MIN_WIDTH = 120
     SEARCH_MAX_WIDTH = 460
     SORT_FIELD_MIN_WIDTH = 190
     SORT_DIRECTION_MIN_WIDTH = 170
@@ -132,11 +133,11 @@ class LayoutMetrics:
     }
     TABLE_SELECT_WIDTH = 76
     TABLE_STATUS_WIDTH = 124
-    TABLE_PHONE_MIN_WIDTH = 190
+    TABLE_PHONE_MIN_WIDTH = 150
     TABLE_PHONE_MAX_WIDTH = 250
-    TABLE_GROUP_MIN_WIDTH = 360
+    TABLE_GROUP_MIN_WIDTH = 180
     TABLE_GROUP_MAX_WIDTH = 520
-    TABLE_NOTES_MIN_WIDTH = 220
+    TABLE_NOTES_MIN_WIDTH = 120
     FILTER_COLUMNS_WIDE = 5
     FILTER_COLUMNS_MEDIUM = 3
     FILTER_COLUMNS_NARROW = 2
@@ -346,6 +347,7 @@ class MainWindow(QMainWindow):
         self._building_groups = False
         apply_app_theme(QApplication.instance())
         self._build_ui()
+        self.restore_window_geometry()
         QApplication.instance().installEventFilter(self)
         self.refresh_group_list()
         self.refresh_table()
@@ -733,7 +735,14 @@ class MainWindow(QMainWindow):
         root = QWidget()
         root.setObjectName("AppRoot")
         root.setLayout(main_layout)
-        self.setCentralWidget(root)
+        self.main_scroll_area = QScrollArea()
+        self.main_scroll_area.setObjectName("MainScrollArea")
+        self.main_scroll_area.setWidgetResizable(True)
+        self.main_scroll_area.setFrameShape(QFrame.NoFrame)
+        self.main_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.main_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.main_scroll_area.setWidget(root)
+        self.setCentralWidget(self.main_scroll_area)
 
         self.addAction(self._shortcut("Ctrl+N", self.add_person))
 
@@ -967,6 +976,54 @@ class MainWindow(QMainWindow):
         self.table.setColumnWidth(1, phone_width)
         self.table.setColumnWidth(2, group_width)
         self.table.setColumnWidth(4, status_width)
+
+    def restore_window_geometry(self) -> None:
+        saved = self.settings.get("window_geometry")
+        if not isinstance(saved, dict):
+            return
+        try:
+            width = int(saved.get("width", 0))
+            height = int(saved.get("height", 0))
+            x = int(saved.get("x", 0))
+            y = int(saved.get("y", 0))
+        except (TypeError, ValueError):
+            return
+        if width < LayoutMetrics.MIN_WINDOW.width() or height < LayoutMetrics.MIN_WINDOW.height():
+            return
+        rect = QRect(x, y, width, height)
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if not self.window_rect_intersects_visible_screen(rect):
+            if screen is None:
+                return
+            available = screen.availableGeometry()
+            rect.moveCenter(available.center())
+            rect.moveTopLeft(available.topLeft() if not available.intersects(rect) else rect.topLeft())
+        self.setGeometry(rect)
+        if saved.get("maximized") is True:
+            self.showMaximized()
+
+    def window_rect_intersects_visible_screen(self, rect: QRect) -> bool:
+        for screen in QGuiApplication.screens():
+            if screen.availableGeometry().intersects(rect):
+                return True
+        return False
+
+    def save_window_geometry(self) -> None:
+        geometry = self.normalGeometry() if self.isMaximized() else self.geometry()
+        if geometry.width() <= 0 or geometry.height() <= 0:
+            return
+        self.settings["window_geometry"] = {
+            "x": geometry.x(),
+            "y": geometry.y(),
+            "width": geometry.width(),
+            "height": geometry.height(),
+            "maximized": self.isMaximized(),
+        }
+        save_recipient_data(self.recipients, self.groups, self.settings)
+
+    def closeEvent(self, event) -> None:
+        self.save_window_geometry()
+        super().closeEvent(event)
 
     def group_tags_widget(self, groups: list[str]) -> QWidget:
         container = QWidget()
