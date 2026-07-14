@@ -105,7 +105,7 @@ class LayoutMetrics:
     CONTROL_HEIGHT = 46
     PRIMARY_CONTROL_HEIGHT = 48
     LOGO_SIZE = 92
-    LOGO_MIN_SIZE = 64
+    LOGO_MIN_SIZE = 60
     ICON_BUTTON_SIZE = 34
     ICON_SIZE = 18
     SIDEBAR_MIN_WIDTH = 168
@@ -114,7 +114,7 @@ class LayoutMetrics:
     SIDEBAR_PADDING = 18
     GROUP_ROW_MARGIN_X = 10
     LIST_ITEM_SPACING = 2
-    SEARCH_MIN_WIDTH = 96
+    SEARCH_MIN_WIDTH = 80
     SEARCH_MAX_WIDTH = 460
     SORT_FIELD_MIN_WIDTH = 120
     SORT_DIRECTION_MIN_WIDTH = 120
@@ -131,12 +131,12 @@ class LayoutMetrics:
         "more": 96,
     }
     BUTTON_MINIMUM_WIDTHS = {
-        "add": 52,
-        "paste": 46,
-        "import": 48,
-        "copy": 46,
-        "export": 46,
-        "more": 54,
+        "add": 38,
+        "paste": 38,
+        "import": 38,
+        "copy": 38,
+        "export": 38,
+        "more": 42,
     }
     TABLE_SELECT_WIDTH = 76
     TABLE_STATUS_WIDTH = 124
@@ -989,7 +989,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "sidebar"):
                 sidebar_width = clamp(
                     round(width * 0.185),
-                    140,
+                    128,
                     LayoutMetrics.SIDEBAR_PREFERRED_WIDTH,
                 )
                 self.sidebar.setMinimumWidth(sidebar_width)
@@ -1063,7 +1063,7 @@ class MainWindow(QMainWindow):
 
     def arrange_action_bar(self) -> None:
         available_width = self.available_workspace_width()
-        columns = 5 if available_width >= 900 else 3 if available_width >= 520 else 2
+        columns = 5 if available_width >= 960 else 3 if available_width >= 520 else 2
         if self.action_bar_columns == columns and self.selection_layout.count() and self.bulk_layout.count():
             return
         clear_layout(self.selection_layout)
