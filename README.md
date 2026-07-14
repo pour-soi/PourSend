@@ -6,9 +6,9 @@
 
 A local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying checked recipient numbers for manual use with RingCentral.
 
-[![Latest Release](https://img.shields.io/github/v/release/pour-soi/PourSend?label=latest%20release)](https://github.com/pour-soi/PourSend/releases/tag/v2.1.1)
+[![Latest Release](https://img.shields.io/github/v/release/pour-soi/PourSend?label=latest%20release)](https://github.com/pour-soi/PourSend/releases/tag/v2.1.2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
-![Tests](https://img.shields.io/badge/tests-140%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-154%20passing-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Portable Windows app · Local data · No telemetry
@@ -21,9 +21,9 @@ This is an independent, unofficial utility and is not affiliated with or endorse
 
 ## Download
 
-**Current release: v2.1.1**
+**Current release: v2.1.2**
 
-1. Download `PourSend-v2.1.1-Windows.zip` from the [official v2.1.1 GitHub Release](https://github.com/pour-soi/PourSend/releases/tag/v2.1.1).
+1. Download `PourSend-v2.1.2-Windows.zip` from the [official v2.1.2 GitHub Release](https://github.com/pour-soi/PourSend/releases/tag/v2.1.2).
 2. Extract the complete zip file to a normal folder, such as Desktop or Documents.
 3. Run `PourSend.exe` from the extracted folder.
 
@@ -244,4 +244,4 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 140 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, backup import/export, shortcut safety, release versioning, and storage path branding.
+The current suite has 154 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, storage migration, batch phone-number import, search, sorting, phone display formatting, export formats, export scopes, backup import/export, shortcut safety, release versioning, storage path branding, and responsive layout behavior.
