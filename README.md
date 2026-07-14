@@ -140,7 +140,13 @@ Groups:
 
 *Main window: local recipient management with groups, search, import, copy, export, and checked-recipient actions.*
 
-TODO: Add screenshots for multi-group management, import preview, export options, and search/filtering.
+TODO: Add future screenshots for:
+
+- Multi-group management
+- Import
+- Export
+- Search
+- Responsive resizing GIF
 
 ## Brand Assets
 
