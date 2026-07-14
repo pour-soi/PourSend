@@ -666,7 +666,8 @@ class MainWindow(QMainWindow):
         empty_outer.addStretch(1)
 
         self.table_stack = QStackedWidget()
-        self.table_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.table_stack.setMinimumWidth(0)
+        self.table_stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.table_stack.addWidget(self.table)
         self.table_stack.addWidget(self.empty_state)
 
