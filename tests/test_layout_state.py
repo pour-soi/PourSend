@@ -186,7 +186,13 @@ class LayoutStateTests(unittest.TestCase):
                     f"root={window.main_scroll_area.widget().minimumSizeHint().toTuple()} "
                     f"viewport={window.main_scroll_area.viewport().size().toTuple()} "
                     f"brand={window.brand.width()} sidebar={window.sidebar.width()} "
-                    f"content={window.table_stack.width()} action={window.action_bar.sizeHint().toTuple()}"
+                    f"content={window.table_stack.width()} "
+                    f"workspace_min={window.table_stack.parentWidget().minimumSizeHint().toTuple()} "
+                    f"filter_min={window.filter_bar.minimumSize().toTuple()} "
+                    f"filter_hint={window.filter_bar.sizeHint().toTuple()} "
+                    f"table_min={window.table.minimumSizeHint().toTuple()} "
+                    f"stack_min={window.table_stack.minimumSizeHint().toTuple()} "
+                    f"action={window.action_bar.sizeHint().toTuple()}"
                 )
                 self.assertEqual(hscroll, 0, diagnostic)
                 self.assertGreater(window.main_scroll_area.verticalScrollBar().maximum(), 0)
