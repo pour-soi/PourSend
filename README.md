@@ -4,16 +4,18 @@
   <img src="assets/poursend-logo.png" alt="PourSend official logo" width="260">
 </p>
 
-A local Windows desktop utility for organizing recipients, batch-importing phone numbers, and copying checked recipient numbers for manual use with RingCentral.
+A local-first Windows desktop app for preparing recipient phone-number lists quickly. PourSend supports multi-group recipients, intelligent duplicate detection, responsive resizing, batch import, search, copy, and export workflows for manual use with RingCentral.
 
 [![Latest Release](https://img.shields.io/github/v/release/pour-soi/PourSend?label=latest%20release)](https://github.com/pour-soi/PourSend/releases/tag/v2.1.2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Tests](https://img.shields.io/badge/tests-154%20passing-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Portable Windows app · Local data · No telemetry
+Windows desktop app · Local-first data · Multi-group recipients · Fast copy/export workflow
 
 ![PourSend main window](assets/poursend-main-window.png)
+
+*Main window with groups, search, filters, recipient table, and checked-recipient actions.*
 
 PourSend does not send messages itself. You copy prepared recipient numbers from the app, paste them into RingCentral, and send manually.
 
@@ -31,6 +33,14 @@ No installation is required. Do not run `PourSend.exe` directly from inside the 
 
 ## Highlights
 
+### Recipient Organization
+
+- Assign one recipient to multiple groups at the same time.
+- Add an existing phone number to another group without creating a duplicate record.
+- Keep **All Recipients** deduplicated by normalized phone number.
+- Delete groups without deleting the recipients inside them.
+- Preserve checked-recipient workflows across search, filters, and groups.
+
 ### Smart Import
 
 - Paste copied phone lists with **Paste List**.
@@ -39,18 +49,17 @@ No installation is required. Do not run `PourSend.exe` directly from inside the 
 - Extract multiple numbers from one line.
 - Extract numbers from mixed text, labels, and copied CRM-style content.
 - Review an import preview before adding recipients.
-- See duplicate, already-existing, and invalid counts.
+- See new-recipient, added-to-group, already-in-group, duplicate-input, and invalid counts.
+- Reuse existing recipient records when imported numbers already exist.
 - Undo the most recent successful import.
 
-### Search & Organization
+### Fast Preparation Workflow
 
-- Organize recipients into groups.
-- Search instantly while typing.
-- Search phone numbers regardless of punctuation.
-- Sort by recently added order, phone number, or group.
-- Choose ascending or descending sort direction.
-- Display phone numbers in selectable formats.
-- Use checked-recipient workflows for copy, export, group membership, and batch edit actions.
+- Check recipients from any group they belong to.
+- Copy checked recipients in the format you need.
+- Export all recipients, the current group, the current search, or checked recipients.
+- Batch edit checked recipients without leaving the main window.
+- Save changes automatically after data-changing workflows.
 
 ### Copy & Export
 
@@ -58,6 +67,22 @@ No installation is required. Do not run `PourSend.exe` directly from inside the 
 - Copy checked recipients or the current search results.
 - Export TXT, CSV, or XLSX files.
 - Export all recipients, the current group, the current search, or checked recipients.
+
+### Search & Filtering
+
+- Search instantly while typing.
+- Search phone numbers regardless of punctuation.
+- Sort by recently added order, phone number, or group.
+- Choose ascending or descending sort direction.
+- Display phone numbers in selectable formats.
+- Keep current search and current selection deduplicated by phone number.
+
+### Fluid Responsive Layout
+
+- Resize the window smoothly without switching between separate desktop and compact layouts.
+- Let the sidebar, search field, filters, table, buttons, margins, and spacing adapt continuously.
+- Keep the recipient table usable with scrolling when space is limited.
+- Avoid horizontal scrolling at common working sizes.
 
 ### Backup & Recovery
 
@@ -76,10 +101,43 @@ No installation is required. Do not run `PourSend.exe` directly from inside the 
 ### Privacy
 
 - Recipient data is stored locally.
+- Data is created beside the portable app by default.
 - The app does not require a cloud account.
 - No telemetry is collected.
 - There is no RingCentral API integration.
 - There is no automatic message sending.
+
+## Multi-Group Recipients
+
+PourSend keeps phone number as the unique recipient identity. One recipient can belong to multiple groups at the same time.
+
+Example:
+
+```text
+Phone:
++1 415 111 1111
+
+Groups:
+- Default
+- Female Mandarin
+- Follow Up
+- VIP
+```
+
+- Adding `+1 415 111 1111` to another group does not create another recipient.
+- The existing recipient simply gains another group membership.
+- **All Recipients** still shows one recipient record for that phone number.
+- Group views show the recipient in every group it belongs to.
+- Deleting a group never deletes recipients.
+- If all groups are removed from a recipient, PourSend automatically assigns `Default`.
+
+## Screenshots
+
+![PourSend main window](assets/poursend-main-window.png)
+
+*Main window: local recipient management with groups, search, import, copy, export, and checked-recipient actions.*
+
+TODO: Add screenshots for multi-group management, import preview, export options, and search/filtering.
 
 ## Brand Assets
 
@@ -118,11 +176,11 @@ During preview and import:
 
 ### Groups
 
-A recipient can belong to one or more groups. Records without a valid group fall back to `Default`.
-
-Deleting a group does not delete the recipients inside it. Recipients with no remaining valid groups fall back to `Default`.
-
-You can open a group, search within that group, then select or deselect only the visible recipients in that group.
+- Recipients can belong to one or more groups.
+- Adding an existing phone number to a new group adds membership instead of creating a duplicate.
+- Deleting a group does not delete the recipients inside it.
+- Records without a valid group fall back to `Default`.
+- You can open a group, search within that group, then select or deselect only the visible recipients in that group.
 
 ### Copy Numbers
 
@@ -165,29 +223,44 @@ Use **Import Backup** to restore recipients, groups, settings, and notes from a 
 - `Ctrl+Z`: undo the most recent successful import when focus is not in a text field.
 - `Delete`: delete checked recipients when focus is not in a text field.
 
-## Data Location
+## Data Storage
 
 PourSend is portable and stores data locally.
 
-When running the packaged Windows app, the primary data file is:
+When running the packaged Windows app, PourSend automatically creates this folder beside `PourSend.exe`:
 
 ```text
-<folder containing PourSend.exe>\poursend_data\recipients.json
+<PourSend folder>\poursend_data\
 ```
 
-When running from source, the primary data file is:
+The folder contains:
+
+- `recipients.json`: recipients, groups, notes, selected state, and related recipient data.
+- `settings.json`: window size, position, maximized state, and application preferences.
+
+The folder is portable. To move PourSend to another computer, copy the extracted PourSend folder together with `poursend_data`.
+
+When running from source, PourSend uses:
 
 ```text
-<repository root>\poursend_data\recipients.json
+<repository root>\poursend_data\
 ```
 
 If the primary folder is not writable, PourSend falls back to:
 
 ```text
-%USERPROFILE%\.poursend_data\recipients.json
+%USERPROFILE%\.poursend_data\
 ```
 
-Use **Export Backup** before moving PourSend to a different folder or computer. Backup files are user-chosen JSON files and are separate from the automatic local data file.
+Use **Export Backup** before moving PourSend to a different folder or computer. Backup files are user-chosen JSON files and are separate from the automatic local data folder.
+
+## Upgrading
+
+- Older databases are migrated automatically when PourSend starts.
+- Legacy single-group records are converted to multi-group records.
+- Existing phone numbers, groups, notes, selected state, and settings are preserved.
+- Recipients without a valid group are assigned to `Default`.
+- Before upgrading, create a backup with **Export Backup** or copy the `poursend_data` folder.
 
 ## Troubleshooting
 
