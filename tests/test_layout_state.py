@@ -103,12 +103,14 @@ class LayoutStateTests(unittest.TestCase):
         self.assertEqual(sizes[-1], LayoutMetrics.LOGO_MIN_SIZE)
         self.assertGreater(len(set(sizes)), 3)
 
-    def test_populated_table_shows_action_bar_without_bulk_actions_until_checked(self):
+    def test_populated_table_shows_selection_controls_above_table(self):
         window = self.make_window([recipient("+14151111111"), recipient("+16282222222")])
         self.addCleanup(window.close)
 
         self.assertIs(window.table_stack.currentWidget(), window.table)
-        self.assertFalse(window.action_bar.isHidden())
+        self.assertFalse(window.selection_actions.isHidden())
+        self.assertLess(window.workspace_layout.indexOf(window.selection_actions), window.workspace_layout.indexOf(window.table_stack))
+        self.assertTrue(window.action_bar.isHidden())
         self.assertTrue(window.bulk_actions.isHidden())
         self.assertTrue(all(button.isEnabled() for button in window.table_action_buttons))
 
@@ -119,6 +121,8 @@ class LayoutStateTests(unittest.TestCase):
         self.assertFalse(window.action_bar.isHidden())
         self.assertFalse(window.bulk_actions.isHidden())
         self.assertEqual(window.bulk_count_label.text(), "1 recipient checked")
+        self.assertIn("Add Checked to Group", [button.text() for button in window.bulk_action_buttons])
+        self.assertIn("Remove Checked from Group", [button.text() for button in window.bulk_action_buttons])
 
     def test_search_empty_hides_database_empty_actions(self):
         window = self.make_window([recipient("+14151111111")])
@@ -128,6 +132,7 @@ class LayoutStateTests(unittest.TestCase):
 
         self.assertIs(window.table_stack.currentWidget(), window.empty_state)
         self.assertTrue(window.empty_actions.isHidden())
+        self.assertTrue(window.selection_actions.isHidden())
         self.assertTrue(window.action_bar.isHidden())
 
     def test_filter_toolbar_uses_responsive_column_counts(self):

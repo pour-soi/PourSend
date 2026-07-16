@@ -473,13 +473,9 @@ class MainWindow(QMainWindow):
         new_group_button = icon_button("New Group", "add")
         rename_group_button = icon_button("Rename", "edit")
         delete_group_button = icon_button("Delete", "trash", DANGER_BUTTON, "#d24b4b")
-        assign_group_button = icon_button("Add Checked", "user-add")
-        remove_group_button = icon_button("Remove Checked", "user-minus", SECONDARY_BUTTON, "#d24b4b")
         new_group_button.clicked.connect(self.create_group)
         rename_group_button.clicked.connect(self.rename_group)
         delete_group_button.clicked.connect(self.delete_group)
-        assign_group_button.clicked.connect(self.assign_checked_to_group)
-        remove_group_button.clicked.connect(self.remove_checked_from_current_group)
 
         group_title = QLabel("Groups")
         group_title.setObjectName("SectionTitle")
@@ -509,11 +505,6 @@ class MainWindow(QMainWindow):
         group_action_row.addWidget(rename_group_button)
         group_action_row.addWidget(delete_group_button)
         group_tools.addLayout(group_action_row)
-        group_checked_row = QVBoxLayout()
-        group_checked_row.setSpacing(LayoutMetrics.SPACING_XS)
-        group_checked_row.addWidget(assign_group_button)
-        group_checked_row.addWidget(remove_group_button)
-        group_tools.addLayout(group_checked_row)
 
         sidebar = PreferredWidthFrame(LayoutMetrics.SIDEBAR_PREFERRED_WIDTH)
         self.sidebar = sidebar
@@ -691,11 +682,13 @@ class MainWindow(QMainWindow):
         self.copy_scope_combo = QComboBox()
         self.copy_scope_combo.addItem("Checked Numbers", SCOPE_SELECTION)
         self.copy_scope_combo.addItem("Current Search", SCOPE_SEARCH)
+        self.copy_scope_combo.setToolTip("Choose which recipients the Copy action uses.")
         configure_combo(self.copy_scope_combo, LayoutMetrics.COPY_SCOPE_MIN_WIDTH)
         self.copy_format_combo = QComboBox()
         self.copy_format_combo.addItem("Displayed Number", COPY_DISPLAYED)
         self.copy_format_combo.addItem("Digits Only", COPY_DIGITS)
         self.copy_format_combo.addItem("E.164", COPY_E164)
+        self.copy_format_combo.setToolTip("Choose how phone numbers are formatted when copied.")
         configure_combo(self.copy_format_combo, LayoutMetrics.COPY_FORMAT_MIN_WIDTH)
         self.count_label = QLabel("")
         self.count_label.setObjectName("MutedText")
@@ -704,7 +697,7 @@ class MainWindow(QMainWindow):
             control_group("Order", self.sort_direction_combo),
             control_group("Phone Format", self.phone_format_combo),
             control_group("Copy Scope", self.copy_scope_combo),
-            control_group("Output", self.copy_format_combo),
+            control_group("Copy Format", self.copy_format_combo),
         ]
         self.arrange_filter_toolbar()
 
@@ -730,6 +723,8 @@ class MainWindow(QMainWindow):
             button.setMinimumWidth(0)
             button.setToolTip(button.text())
             button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.select_all_button.setToolTip("Check all recipients currently visible in the table.")
+        self.deselect_all_button.setToolTip("Clear checks from all recipients currently visible in the table.")
         self.bulk_count_label = QLabel("0 recipients checked")
         self.bulk_count_label.setObjectName("BulkCount")
         self.bulk_actions = QWidget()
@@ -739,8 +734,8 @@ class MainWindow(QMainWindow):
         bulk_layout.setVerticalSpacing(LayoutMetrics.SPACING_SM)
         bulk_copy_button = icon_button("Copy", "clipboard")
         bulk_set_button = icon_button("Set Groups", "tag")
-        bulk_add_button = icon_button("Add to Group", "user-add")
-        bulk_remove_button = icon_button("Remove from Group", "user-minus")
+        bulk_add_button = icon_button("Add Checked to Group", "user-add")
+        bulk_remove_button = icon_button("Remove Checked from Group", "user-minus")
         bulk_delete_button = icon_button("Delete Selected...", "trash", DANGER_BUTTON, "#d24b4b")
         bulk_copy_button.clicked.connect(self.copy_selected)
         bulk_set_button.clicked.connect(self.batch_edit_checked)
@@ -755,7 +750,6 @@ class MainWindow(QMainWindow):
             button.setToolTip(button.text())
             button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.action_bar_columns = 0
-        action_layout.addWidget(self.selection_actions)
         action_layout.addWidget(self.bulk_actions)
 
         workspace = QFrame()
@@ -771,6 +765,7 @@ class MainWindow(QMainWindow):
         self.workspace_layout.setSpacing(LayoutMetrics.SPACING_LG)
         self.workspace_layout.addLayout(workspace_heading)
         self.workspace_layout.addLayout(filter_bar)
+        self.workspace_layout.addWidget(self.selection_actions)
         self.workspace_layout.addWidget(self.table_stack, stretch=1)
         self.workspace_layout.addWidget(self.action_bar)
 
@@ -1794,7 +1789,8 @@ class MainWindow(QMainWindow):
         self.workspace_meta.setText("1 recipient" if group_count == 1 else f"{group_count} recipients")
         self.bulk_count_label.setText(checked_status_text(total_selected))
         self.bulk_actions.setVisible(total_selected > 0)
-        self.action_bar.setVisible(has_visible_recipients or total_selected > 0)
+        self.selection_actions.setVisible(has_visible_recipients)
+        self.action_bar.setVisible(total_selected > 0)
         for button in self.table_action_buttons:
             button.setEnabled(has_visible_recipients)
         self.count_label.setText(
