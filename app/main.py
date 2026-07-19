@@ -1143,7 +1143,10 @@ class MainWindow(QMainWindow):
     def arrange_action_bar(self) -> None:
         available_width = self.available_workspace_width()
         responsive_width = self.responsive_width()
-        compact = responsive_width < 1100 or self.height() < 700
+        bulk_button_width = sum(button.minimumSizeHint().width() for button in self.bulk_action_buttons)
+        bulk_button_width += self.bulk_layout.horizontalSpacing() * (len(self.bulk_action_buttons) - 1)
+        available_bulk_width = max(0, available_width - LayoutMetrics.SPACING_MD * 2)
+        compact = responsive_width < 1100 or self.height() < 700 or bulk_button_width > available_bulk_width
         icon_only_actions = compact and responsive_width < 520
         self.recipient_actions_button.setText("" if icon_only_actions else "Actions")
         if icon_only_actions:
