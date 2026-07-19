@@ -1,39 +1,36 @@
-# PourSend v2.0.0
+# PourSend v2.2.0 — Group Selection and Colors
 
-PourSend is a local desktop tool for preparing, organizing, copying, importing, and exporting phone-number recipient lists for manual use with RingCentral.
+PourSend v2.2.0 adds independent checked-recipient selections for each group and persistent muted group colors without changing recipient or export formats.
 
-## Highlights
+## What's New
 
-- Phone-number-based recipient management with normalized U.S. phone numbers.
-- Smart bulk phone extraction from pasted text and imported files.
-- Groups for organizing recipients.
-- Instant search, punctuation-insensitive phone search, and sorting.
-- Copy formats for displayed numbers, digits only, and E.164.
-- TXT, CSV, and XLSX export.
-- JSON backup and restore.
-- Batch edit for checked recipients.
-- Drag-and-drop file import.
-- Import preview with duplicate, existing-number, and invalid-entry counts.
-- Undo Last Import.
-- Keyboard shortcuts that preserve normal text-field editing.
-- Large-list usability improvements.
+- Each group remembers its own checked recipients when switching views.
+- Select All and Clear Selection affect only visible results in the active group.
+- Copy Selected and Delete Selected operate only on the active group's checked recipients.
+- Existing and newly created groups receive persistent muted colors automatically.
+- User-created groups can select any color from the existing eight-color palette.
 
-## Import Examples
+## Improvements
 
-PourSend can extract numbers from content such as:
+- Group color assignments survive restart and transfer when groups are renamed.
+- Deleted groups have their saved color assignments removed.
+- The color chooser supports visible selection, hover and focus states, arrow-key navigation, and Escape cancellation.
+- All Recipients remains fixed blue-gray, and Default cannot be manually recolored.
+- Manual color changes preserve recipients, search state, active group, row highlighting, and group selections.
 
-- `4151111111`
-- `(415) 111-1111`
-- `+1 415 111 1111`
-- `4151111111 spouse 6282222222`
+## Compatibility
 
-## Data and Compatibility
+- Existing settings are migrated automatically.
+- Recipient records and the recipient data schema are unchanged.
+- Import, CSV, copy, export, and backup formats are unchanged.
+- Recipient data remains local.
 
-- Supported older data schemas are migrated automatically.
-- Phone number is the recipient identity.
-- New recipients do not require names.
-- Backup files use PourSend's JSON backup workflow.
+## Download
 
-## Testing
+Download `PourSend-v2.2.0-Windows.zip`, extract the complete folder, and run `PourSend.exe`. Python is not required.
 
-The v2.0.0 release preparation was verified with 114 passing automated tests.
+## Validation
+
+- 201 automated tests passed locally.
+- Compile and syntax checks passed.
+- Windows CI build and executable smoke-test results are verified before publication.

@@ -48,6 +48,7 @@ class LayoutStateTests(unittest.TestCase):
             window = MainWindow()
         window.recipients = recipients or []
         window.groups = [DEFAULT_GROUP]
+        window.group_selections = window.load_group_selections()
         window.refresh_group_list()
         window.refresh_table()
         return window
@@ -240,7 +241,7 @@ class LayoutStateTests(unittest.TestCase):
             (window.delete_recipient_button, window.menu_delete_recipient_action, "delete_highlighted_recipient"),
             (window.select_all_button, window.menu_select_all_action, "set_all_visible"),
             (window.deselect_all_button, window.menu_clear_selection_action, "set_all_visible"),
-            (window.bulk_copy_button, window.menu_copy_checked_action, "copy_selected"),
+            (window.bulk_copy_button, window.menu_copy_checked_action, "copy_checked_recipients"),
             (window.bulk_add_button, window.menu_add_checked_action, "assign_checked_to_group"),
             (window.bulk_set_button, window.menu_set_groups_action, "batch_edit_checked"),
             (window.bulk_remove_button, window.menu_remove_checked_action, "remove_checked_from_current_group"),

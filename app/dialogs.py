@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -18,9 +19,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHeaderView,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 
 from app.theme import DANGER_BUTTON, PRIMARY_BUTTON, mark_button
+from core.groups import GROUP_COLOR_PALETTE
 from core.importing import PastePreviewRow, invalid_examples, preview_pasted_recipients, preview_summary
 
 
@@ -32,6 +34,86 @@ def add_dialog_header(layout: QVBoxLayout, title: str, description: str) -> None
     description_label.setWordWrap(True)
     layout.addWidget(title_label)
     layout.addWidget(description_label)
+
+
+class GroupColorDialog(QDialog):
+    COLUMNS = 4
+
+    def __init__(self, parent=None, current_color: str = "") -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Change Group Color")
+        self.setFixedWidth(300)
+        self._selected_color: str | None = None
+        self.swatches: list[QPushButton] = []
+
+        surface = QFrame()
+        surface.setObjectName("DialogSurface")
+        surface_layout = QVBoxLayout(surface)
+        surface_layout.setContentsMargins(16, 16, 16, 16)
+        surface_layout.setSpacing(12)
+        add_dialog_header(surface_layout, "Change Group Color", "Choose a color for this group.")
+
+        swatch_layout = QGridLayout()
+        swatch_layout.setContentsMargins(0, 4, 0, 4)
+        swatch_layout.setHorizontalSpacing(14)
+        swatch_layout.setVerticalSpacing(14)
+        current = current_color.lower()
+        for index, color in enumerate(GROUP_COLOR_PALETTE):
+            swatch = QPushButton("✓" if color == current else "")
+            swatch.setObjectName("ColorSwatch")
+            swatch.setAccessibleName(f"Group color {index + 1}")
+            swatch.setFixedSize(38, 38)
+            swatch.setCheckable(True)
+            swatch.setAutoExclusive(True)
+            swatch.setChecked(color == current)
+            swatch.setStyleSheet(
+                "QPushButton#ColorSwatch { "
+                f"background: {color}; border: 3px solid transparent; border-radius: 19px; "
+                "padding: 0; color: white; font-weight: 700; "
+                "} QPushButton#ColorSwatch:hover { border-color: #b8c7da; } "
+                "QPushButton#ColorSwatch:focus { border-color: #4f83f1; } "
+                "QPushButton#ColorSwatch:checked { border-color: #17233a; } "
+                "QPushButton#ColorSwatch:checked:focus { border-color: #4f83f1; }"
+            )
+            swatch.clicked.connect(lambda _checked=False, chosen=color: self.choose_color(chosen))
+            swatch.installEventFilter(self)
+            self.swatches.append(swatch)
+            swatch_layout.addWidget(swatch, index // self.COLUMNS, index % self.COLUMNS, alignment=Qt.AlignCenter)
+        surface_layout.addLayout(swatch_layout)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
+        buttons.rejected.connect(self.reject)
+        surface_layout.addWidget(buttons)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.addWidget(surface)
+
+    def choose_color(self, color: str) -> None:
+        self._selected_color = color
+        self.accept()
+
+    def selected_color(self) -> str | None:
+        return self._selected_color
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched in self.swatches and event.type() == QEvent.KeyPress:
+            offsets = {
+                Qt.Key_Left: -1,
+                Qt.Key_Right: 1,
+                Qt.Key_Up: -self.COLUMNS,
+                Qt.Key_Down: self.COLUMNS,
+            }
+            if event.key() in offsets:
+                index = self.swatches.index(watched)
+                self.swatches[(index + offsets[event.key()]) % len(self.swatches)].setFocus()
+                return True
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        current = next((swatch for swatch in self.swatches if swatch.isChecked()), self.swatches[0])
+        current.setFocus()
 
 
 class PersonDialog(QDialog):
@@ -408,7 +490,7 @@ class CsvColumnDialog(QDialog):
 
 
 class DeleteConfirmationDialog(QDialog):
-    def __init__(self, count: int, parent=None):
+    def __init__(self, count: int, parent=None, group_name: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Delete selected recipients")
         self.setMinimumWidth(380)
@@ -419,7 +501,12 @@ class DeleteConfirmationDialog(QDialog):
         surface_layout.setContentsMargins(16, 16, 16, 16)
         surface_layout.setSpacing(12)
         noun = "recipient" if count == 1 else "recipients"
-        add_dialog_header(surface_layout, "Delete selected recipients", f"Delete {count} selected {noun}? This cannot be undone.")
+        group_context = f' from "{group_name}"' if group_name else ""
+        add_dialog_header(
+            surface_layout,
+            "Delete selected recipients",
+            f"Delete {count} selected {noun}{group_context}? This cannot be undone.",
+        )
 
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
         buttons.button(QDialogButtonBox.Ok).setText("Delete")

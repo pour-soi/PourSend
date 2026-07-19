@@ -7,6 +7,17 @@ from .phone import format_phone_number, normalize_us_phone, phone_search_digits
 
 ALL_RECIPIENTS = "__all__"
 DEFAULT_GROUP = "Default"
+ALL_RECIPIENTS_COLOR = "#64748b"
+GROUP_COLOR_PALETTE = (
+    "#6685a8",
+    "#7d72a8",
+    "#548b8b",
+    "#739276",
+    "#aa8750",
+    "#b47768",
+    "#a66f83",
+    "#718096",
+)
 SORT_PHONE = "phone"
 SORT_GROUP = "group"
 SORT_RECENT = "recent"
@@ -29,6 +40,57 @@ def ensure_default_group(groups: Iterable[str] = ()) -> list[str]:
     if DEFAULT_GROUP not in normalized:
         normalized.insert(0, DEFAULT_GROUP)
     return normalized
+
+
+def normalize_group_colors(value) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    colors: dict[str, str] = {}
+    for raw_group, raw_color in value.items():
+        group = str(raw_group).strip()
+        color = str(raw_color).strip().lower()
+        if (
+            group
+            and len(color) == 7
+            and color.startswith("#")
+            and all(character in "0123456789abcdef" for character in color[1:])
+        ):
+            colors[group] = color
+    return colors
+
+
+def next_group_color(colors: dict[str, str]) -> str:
+    used = set(colors.values())
+    for color in GROUP_COLOR_PALETTE:
+        if color not in used:
+            return color
+    return GROUP_COLOR_PALETTE[len(colors) % len(GROUP_COLOR_PALETTE)]
+
+
+def ensure_group_colors(groups: Iterable[str], colors=None) -> dict[str, str]:
+    normalized_colors = normalize_group_colors(colors)
+    names = [group for group in normalize_group_names(groups) if group != ALL_RECIPIENTS]
+    assigned = {group: normalized_colors[group] for group in names if group in normalized_colors}
+    for group in names:
+        if group not in assigned:
+            assigned[group] = next_group_color(assigned)
+    return {group: assigned[group] for group in names}
+
+
+def rename_group_color(colors: dict[str, str], old_name: str, new_name: str) -> None:
+    clean_name = new_name.strip()
+    if old_name in colors and clean_name:
+        colors[clean_name] = colors.pop(old_name)
+
+
+def delete_group_color(colors: dict[str, str], group: str) -> None:
+    colors.pop(group, None)
+
+
+def resolve_group_color(group: str, colors: dict[str, str]) -> str:
+    if group == ALL_RECIPIENTS:
+        return ALL_RECIPIENTS_COLOR
+    return colors.get(group, GROUP_COLOR_PALETTE[0])
 
 
 def normalize_recipient_groups(recipient: dict) -> list[str]:

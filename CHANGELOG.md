@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.2.0 - 2026-07-19
+
+### Group-Local Selection
+
+- Stores checked-recipient state independently for each group.
+- Restores each group's checked recipients when switching groups.
+- Limits Select All and Clear Selection to visible results in the active group.
+- Limits Copy Selected and Delete Selected to checked recipients in the active group.
+- Preserves checked state while searching and keeps row highlighting independent.
+
+### Group Colors
+
+- Assigns persistent muted colors to existing and newly created groups.
+- Preserves colors when groups are renamed and removes them when groups are deleted.
+- Adds a compact Change Color chooser with eight palette colors.
+- Supports mouse and keyboard color selection, including Escape cancellation.
+- Keeps All Recipients fixed blue-gray and prevents manual recoloring of Default.
+
+### Compatibility
+
+- Migrates existing settings safely without changing recipient records.
+- Preserves existing recipient, import, export, and backup formats.
+- Keeps recipient data local.
+
 ## v2.0.0 - 2026-07-09
 
 ### Recipient Model

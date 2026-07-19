@@ -27,6 +27,30 @@ class StorageTests(unittest.TestCase):
 
         self.assertNotIn("window_geometry", parsed)
 
+    def test_group_selections_round_trip_and_normalize_phone_identities(self):
+        settings = {
+            "group_selections": {
+                "Caregivers": ["(415) 111-1111", "+14151111111", "+16282222222"],
+                "Follow-up": ["+17073333333"],
+            }
+        }
+
+        saved = make_saved_data([], ["Caregivers", "Follow-up"], settings)
+        parsed = parse_saved_settings(saved)
+
+        self.assertEqual(
+            parsed["group_selections"],
+            {
+                "Caregivers": ["+14151111111", "+16282222222"],
+                "Follow-up": ["+17073333333"],
+            },
+        )
+
+    def test_invalid_group_selection_settings_are_ignored(self):
+        parsed = parse_saved_settings({"settings": {"group_selections": ["not", "a", "mapping"]}})
+
+        self.assertNotIn("group_selections", parsed)
+
     def test_missing_data_file_is_created_with_empty_database(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / APP_FOLDER / "recipients.json"

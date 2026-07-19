@@ -4,7 +4,14 @@ import json
 import sys
 from pathlib import Path
 
-from core.groups import collect_groups, ensure_default_group, normalize_group_names, normalize_recipients
+from core.groups import (
+    collect_groups,
+    ensure_default_group,
+    normalize_group_colors,
+    normalize_group_names,
+    normalize_recipients,
+    recipient_phone_key,
+)
 from core.phone import PHONE_FORMAT_E164, format_phone_number, normalize_phone_format
 
 
@@ -14,6 +21,26 @@ DATA_FILE = "recipients.json"
 
 def default_settings() -> dict:
     return {"phone_format": PHONE_FORMAT_E164}
+
+
+def normalize_group_selections(value) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    selections: dict[str, list[str]] = {}
+    for raw_group, raw_phones in value.items():
+        group = str(raw_group).strip()
+        if not group or not isinstance(raw_phones, list):
+            continue
+        phones: list[str] = []
+        for raw_phone in raw_phones:
+            if not isinstance(raw_phone, str):
+                continue
+            key = recipient_phone_key({"phone": raw_phone})
+            if key and key not in phones:
+                phones.append(key)
+        if phones:
+            selections[group] = phones
+    return selections
 
 
 def data_path() -> Path:
@@ -78,6 +105,12 @@ def parse_saved_settings(data) -> dict:
         window_geometry = raw_settings.get("window_geometry")
         if isinstance(window_geometry, dict):
             settings["window_geometry"] = window_geometry
+        group_selections = normalize_group_selections(raw_settings.get("group_selections"))
+        if group_selections:
+            settings["group_selections"] = group_selections
+        group_colors = normalize_group_colors(raw_settings.get("group_colors"))
+        if group_colors:
+            settings["group_colors"] = group_colors
     return settings
 
 
@@ -90,6 +123,12 @@ def make_saved_data(recipients: list[dict], groups: list[str], settings: dict | 
         window_geometry = settings.get("window_geometry")
         if isinstance(window_geometry, dict):
             saved_settings["window_geometry"] = window_geometry
+        group_selections = normalize_group_selections(settings.get("group_selections"))
+        if group_selections:
+            saved_settings["group_selections"] = group_selections
+        group_colors = normalize_group_colors(settings.get("group_colors"))
+        if group_colors:
+            saved_settings["group_colors"] = group_colors
     return {
         "version": 3,
         "settings": saved_settings,

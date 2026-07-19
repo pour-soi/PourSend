@@ -37,7 +37,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.dialogs import DeleteConfirmationDialog, BatchEditDialog, ExportDialog, ImportPreviewDialog, PasteListDialog, PersonDialog
+from app.dialogs import (
+    BatchEditDialog,
+    DeleteConfirmationDialog,
+    ExportDialog,
+    GroupColorDialog,
+    ImportPreviewDialog,
+    PasteListDialog,
+    PersonDialog,
+)
 from app.storage import load_recipient_data, save_recipient_data
 from app.theme import DANGER_BUTTON, PRIMARY_BUTTON, SECONDARY_BUTTON, SUBTLE_BUTTON, apply_app_theme, mark_button
 from app.ui_helpers import checked_status_text, empty_state_message, group_recipient_count, workspace_title
@@ -61,23 +69,26 @@ from core.groups import (
     ALL_RECIPIENTS,
     assign_to_group,
     batch_update_recipients,
-    checked_recipient_indexes as checked_recipient_indexes_for_bulk,
     collect_groups,
     count_duplicate_phone_numbers,
     create_group,
     DEFAULT_GROUP,
     delete_group,
+    delete_group_color,
+    ensure_group_colors,
     find_recipient_index_by_phone,
     filtered_recipient_indexes,
+    GROUP_COLOR_PALETTE,
     remove_from_group,
     valid_recipient_groups,
     preferred_group,
     recipient_phone_key,
+    rename_group_color,
     rename_group,
+    resolve_group_color,
     SORT_GROUP,
     SORT_PHONE,
     SORT_RECENT,
-    set_selected,
     valid_group_or_default,
 )
 from core.importing import add_import_rows as apply_import_rows
@@ -185,6 +196,7 @@ SVG_ICONS = {
     "groups": '<path d="M7 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M17 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M3 20a5 5 0 0 1 8 0"/><path d="M13 20a5 5 0 0 1 8 0"/>',
     "home": '<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
     "more": '<path d="M6 9l6 6 6-6"/>',
+    "palette": '<path d="M12 3a9 9 0 1 0 0 18h1.5a1.5 1.5 0 0 0 0-3H12a2 2 0 0 1 0-4h3a6 6 0 0 0 0-12h-3z"/><circle cx="7.5" cy="10" r="1"/><circle cx="9.5" cy="6.5" r="1"/><circle cx="14" cy="6.5" r="1"/>',
     "phone": '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6.4 6.4l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z"/>',
     "search": '<circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/>',
     "star": '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>',
@@ -387,6 +399,46 @@ class RecipientTableDelegate(QStyledItemDelegate):
         return True
 
 
+class GroupRowWidget(QWidget):
+    def __init__(self, color: str) -> None:
+        super().__init__()
+        self.color = QColor(color)
+        self.active = False
+        self.hovered = False
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def set_active(self, active: bool) -> None:
+        if self.active != active:
+            self.active = active
+            self.update()
+
+    def enterEvent(self, event) -> None:
+        self.hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self.active:
+            return
+        color_weight = 0.15 if self.hovered else 0.1
+        background = QColor(
+            round(self.color.red() * color_weight + 255 * (1 - color_weight)),
+            round(self.color.green() * color_weight + 255 * (1 - color_weight)),
+            round(self.color.blue() * color_weight + 255 * (1 - color_weight)),
+        )
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(background)
+        painter.drawRoundedRect(self.rect(), 12, 12)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -395,6 +447,9 @@ class MainWindow(QMainWindow):
         self.resize(LayoutMetrics.DEFAULT_WINDOW)
         self.setMinimumSize(LayoutMetrics.MIN_WINDOW)
         self.recipients, self.groups, self.settings, load_error = load_recipient_data()
+        self.group_selections = self.load_group_selections()
+        self.group_colors = ensure_group_colors(self.groups, self.settings.get("group_colors"))
+        self.persist_group_colors()
         self.setAcceptDrops(True)
         self.recent_group = DEFAULT_GROUP
         self.last_imported_numbers: list[str | dict] = []
@@ -478,7 +533,7 @@ class MainWindow(QMainWindow):
         self.more_button = more_button
 
         self.group_list = QListWidget()
-        self.group_list.currentItemChanged.connect(lambda _current, _previous: self.refresh_table())
+        self.group_list.currentItemChanged.connect(self.group_changed)
         self.group_list.setMinimumWidth(0)
         self.group_list.setSpacing(LayoutMetrics.LIST_ITEM_SPACING)
         self.group_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -487,10 +542,13 @@ class MainWindow(QMainWindow):
 
         new_group_button = icon_button("New Group", "add")
         rename_group_button = icon_button("Rename", "edit")
+        change_group_color_button = icon_button("Change Color", "palette")
         delete_group_button = icon_button("Delete", "trash", DANGER_BUTTON, "#d24b4b")
         new_group_button.clicked.connect(self.create_group)
         rename_group_button.clicked.connect(self.rename_group)
+        change_group_color_button.clicked.connect(lambda _checked=False: self.change_group_color())
         delete_group_button.clicked.connect(self.delete_group)
+        self.change_group_color_button = change_group_color_button
 
         group_title = QLabel("Groups")
         group_title.setObjectName("SectionTitle")
@@ -518,6 +576,7 @@ class MainWindow(QMainWindow):
         group_action_row = QVBoxLayout()
         group_action_row.setSpacing(LayoutMetrics.SPACING_XS)
         group_action_row.addWidget(rename_group_button)
+        group_action_row.addWidget(change_group_color_button)
         group_action_row.addWidget(delete_group_button)
         group_tools.addLayout(group_action_row)
 
@@ -760,7 +819,7 @@ class MainWindow(QMainWindow):
         self.bulk_add_button = icon_button("Add Checked to Group", "user-add")
         self.bulk_remove_button = icon_button("Remove Checked from Group", "user-minus")
         self.bulk_delete_button = icon_button("Delete Selected...", "trash", DANGER_BUTTON, "#d24b4b")
-        self.bulk_copy_button.clicked.connect(lambda _checked=False: self.copy_selected())
+        self.bulk_copy_button.clicked.connect(lambda _checked=False: self.copy_checked_recipients())
         self.bulk_set_button.clicked.connect(lambda _checked=False: self.batch_edit_checked())
         self.bulk_add_button.clicked.connect(lambda _checked=False: self.assign_checked_to_group())
         self.bulk_remove_button.clicked.connect(lambda _checked=False: self.remove_checked_from_current_group())
@@ -796,7 +855,7 @@ class MainWindow(QMainWindow):
         self.menu_clear_selection_action.triggered.connect(lambda _checked=False: self.set_all_visible(False))
         self.recipient_actions_menu.addSeparator()
         self.menu_copy_checked_action = self.recipient_actions_menu.addAction("Copy Selected")
-        self.menu_copy_checked_action.triggered.connect(lambda _checked=False: self.copy_selected())
+        self.menu_copy_checked_action.triggered.connect(lambda _checked=False: self.copy_checked_recipients())
         self.menu_add_checked_action = self.recipient_actions_menu.addAction("Add to Group")
         self.menu_add_checked_action.triggered.connect(lambda _checked=False: self.assign_checked_to_group())
         self.menu_set_groups_action = self.recipient_actions_menu.addAction("Set Groups")
@@ -918,6 +977,88 @@ class MainWindow(QMainWindow):
             return None
         return group
 
+    def load_group_selections(self) -> dict[str, set[str]]:
+        saved = self.settings.get("group_selections")
+        if isinstance(saved, dict):
+            return {
+                str(group): {str(phone) for phone in phones if str(phone)}
+                for group, phones in saved.items()
+                if isinstance(phones, list)
+            }
+        legacy_checked = {
+            recipient_phone_key(recipient)
+            for recipient in self.recipients
+            if recipient.get("selected") and recipient_phone_key(recipient)
+        }
+        return {ALL_RECIPIENTS: legacy_checked} if legacy_checked else {}
+
+    def selected_phone_keys(self, group: str | None = None) -> set[str]:
+        return self.group_selections.setdefault(group or self.current_group_filter(), set())
+
+    def sync_current_selection_flags(self, group: str | None = None) -> None:
+        group = group or self.current_group_filter()
+        selected_keys = self.selected_phone_keys(group)
+        for recipient in self.recipients:
+            key = recipient_phone_key(recipient)
+            recipient["selected"] = bool(
+                key
+                and key in selected_keys
+                and (group == ALL_RECIPIENTS or group in valid_recipient_groups(recipient, self.groups))
+            )
+
+    def persist_group_selections(self) -> None:
+        valid_scopes = {ALL_RECIPIENTS, *self.groups}
+        scopes_by_key: dict[str, set[str]] = {}
+        for recipient in self.recipients:
+            key = recipient_phone_key(recipient)
+            if key:
+                scopes_by_key[key] = {ALL_RECIPIENTS, *valid_recipient_groups(recipient, self.groups)}
+        serialized: dict[str, list[str]] = {}
+        for group, selected_keys in self.group_selections.items():
+            if group not in valid_scopes:
+                continue
+            valid_keys = {key for key in selected_keys if group in scopes_by_key.get(key, set())}
+            if valid_keys:
+                serialized[group] = sorted(valid_keys)
+        self.group_selections = {group: set(keys) for group, keys in serialized.items()}
+        if serialized:
+            self.settings["group_selections"] = serialized
+        else:
+            self.settings.pop("group_selections", None)
+
+    def replace_selected_phone_key(self, old_key: str, new_key: str) -> None:
+        if not old_key or old_key == new_key:
+            return
+        for selected_keys in self.group_selections.values():
+            if old_key in selected_keys:
+                selected_keys.remove(old_key)
+                if new_key:
+                    selected_keys.add(new_key)
+
+    def discard_selected_phone_keys(self, keys: set[str]) -> None:
+        for selected_keys in self.group_selections.values():
+            selected_keys.difference_update(keys)
+
+    def persist_group_colors(self) -> None:
+        self.group_colors = ensure_group_colors(self.groups, self.group_colors)
+        self.settings["group_colors"] = dict(self.group_colors)
+
+    def group_color(self, group: str) -> str:
+        return resolve_group_color(group, self.group_colors)
+
+    def group_changed(self, _current=None, _previous=None) -> None:
+        if self._building_groups:
+            return
+        self.update_group_row_states()
+        self.update_group_action_states()
+        self.refresh_table()
+
+    def update_group_action_states(self) -> None:
+        if not hasattr(self, "change_group_color_button"):
+            return
+        group = self.current_group_filter()
+        self.change_group_color_button.setVisible(group not in {ALL_RECIPIENTS, DEFAULT_GROUP})
+
     def preferred_group(self) -> str:
         return preferred_group(self.current_named_group(), self.recent_group, self.groups)
 
@@ -946,10 +1087,13 @@ class MainWindow(QMainWindow):
                 break
         self.group_list.setCurrentRow(row_to_select)
         self._building_groups = False
+        self.update_group_row_states()
+        self.update_group_action_states()
 
     def group_row_widget(self, label: str, group: str) -> QWidget:
-        row = QWidget()
+        row = GroupRowWidget(self.group_color(group))
         row.setObjectName("GroupRow")
+        row.setProperty("groupName", group)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(LayoutMetrics.GROUP_ROW_MARGIN_X, 0, LayoutMetrics.GROUP_ROW_MARGIN_X, 0)
         layout.setSpacing(LayoutMetrics.SPACING_SM)
@@ -957,6 +1101,10 @@ class MainWindow(QMainWindow):
         icon = SvgIconLabel(icon_name, icon_color, 20)
         icon.setObjectName("GroupIcon")
         icon.setProperty("groupName", group)
+        color_dot = QLabel()
+        color_dot.setObjectName("GroupColorDot")
+        color_dot.setFixedSize(8, 8)
+        color_dot.setStyleSheet(f"background: {self.group_color(group)}; border-radius: 4px;")
         name = ElidedLabel(label)
         name.setObjectName("GroupName")
         name.setMinimumWidth(0)
@@ -966,9 +1114,20 @@ class MainWindow(QMainWindow):
         count.setAlignment(Qt.AlignCenter)
         count.setMinimumWidth(30)
         layout.addWidget(icon)
+        layout.addWidget(color_dot)
         layout.addWidget(name, stretch=1)
         layout.addWidget(count)
         return row
+
+    def update_group_row_states(self) -> None:
+        current = self.current_group_filter()
+        for row_index in range(self.group_list.count()):
+            item = self.group_list.item(row_index)
+            row = self.group_list.itemWidget(item)
+            if not isinstance(row, GroupRowWidget):
+                continue
+            group = item.data(Qt.UserRole)
+            row.set_active(group == current)
 
     def group_icon(self, group: str) -> tuple[str, str]:
         if group == ALL_RECIPIENTS:
@@ -986,6 +1145,7 @@ class MainWindow(QMainWindow):
     def refresh_table(self) -> None:
         if self._building_groups:
             return
+        self.sync_current_selection_flags()
         query = self.search.text().strip().lower()
         indexes = filtered_recipient_indexes(
             self.recipients,
@@ -1191,7 +1351,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "menu_select_all_action"):
             return
         visible_indexes = self.visible_indexes()
-        visible_checked = sum(1 for index in visible_indexes if self.recipients[index].get("selected"))
+        checked_indexes = set(self.checked_recipient_indexes())
+        visible_checked = sum(1 for index in visible_indexes if index in checked_indexes)
         total_checked = len(self.checked_recipient_indexes())
         has_visible = bool(visible_indexes)
         has_highlighted = self.selected_visible_index() is not None
@@ -1369,8 +1530,14 @@ class MainWindow(QMainWindow):
         if index is None:
             return
         if item.column() == 0:
-            self.recipients[index]["selected"] = item.checkState() == Qt.Checked
+            key = recipient_phone_key(self.recipients[index])
+            selected_keys = self.selected_phone_keys()
+            if item.checkState() == Qt.Checked:
+                selected_keys.add(key)
+            else:
+                selected_keys.discard(key)
         elif item.column() == 1:
+            old_key = recipient_phone_key(self.recipients[index])
             phone = item.text().strip()
             normalized, status = normalize_us_phone(phone)
             if status == "Valid":
@@ -1386,6 +1553,7 @@ class MainWindow(QMainWindow):
                 self.recipients[index]["phone"] = normalized
             else:
                 self.recipients[index]["phone"] = phone
+            self.replace_selected_phone_key(old_key, recipient_phone_key(self.recipients[index]))
             self.refresh_table()
         elif item.column() == 3:
             self.recipients[index]["notes"] = item.text().strip()
@@ -1404,7 +1572,14 @@ class MainWindow(QMainWindow):
         return self._recipient_index(row)
 
     def checked_recipient_indexes(self) -> list[int]:
-        return checked_recipient_indexes_for_bulk(self.recipients)
+        group = self.current_group_filter()
+        selected_keys = self.selected_phone_keys(group)
+        return [
+            index
+            for index, recipient in enumerate(self.recipients)
+            if recipient_phone_key(recipient) in selected_keys
+            and (group == ALL_RECIPIENTS or group in valid_recipient_groups(recipient, self.groups))
+        ]
 
     def show_recipient_context_menu(self, position) -> None:
         row = self.table.rowAt(position.y())
@@ -1612,10 +1787,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Edit recipient", "That phone number already exists.")
             return
         valid_groups = self.valid_groups(groups)
+        old_key = recipient_phone_key(recipient)
         recipient["phone"] = normalized
         recipient["group"] = valid_groups[0]
         recipient["groups"] = valid_groups
         recipient["notes"] = notes
+        self.replace_selected_phone_key(old_key, recipient_phone_key(recipient))
         self.recent_group = valid_groups[0]
         self.save_and_update(selected_group=valid_groups[0])
 
@@ -1642,12 +1819,15 @@ class MainWindow(QMainWindow):
         if not indexes:
             QMessageBox.information(self, "Delete recipient", NO_CHECKED_RECIPIENTS_MESSAGE)
             return
-        dialog = DeleteConfirmationDialog(len(indexes), self)
+        group = self.current_group_filter()
+        dialog = DeleteConfirmationDialog(len(indexes), self, group_name=workspace_title(group))
         if dialog.exec() != DeleteConfirmationDialog.Accepted:
             return
+        deleted_keys = {recipient_phone_key(self.recipients[index]) for index in indexes}
         for index in sorted(indexes, reverse=True):
             del self.recipients[index]
-        self.save_and_update(selected_group=self.current_group_filter())
+        self.discard_selected_phone_keys(deleted_keys)
+        self.save_and_update(selected_group=group)
 
     def delete_highlighted_recipient(self) -> None:
         index = self.selected_visible_index()
@@ -1668,11 +1848,18 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
+        deleted_key = recipient_phone_key(self.recipients[index])
         del self.recipients[index]
+        self.discard_selected_phone_keys({deleted_key})
         self.save_and_update(selected_group=self.current_group_filter())
 
     def set_all_visible(self, selected: bool) -> None:
-        set_selected(self.recipients, [index for index in self.checked_or_visible_indexes()], selected)
+        selected_keys = self.selected_phone_keys()
+        visible_keys = {recipient_phone_key(self.recipients[index]) for index in self.visible_indexes()}
+        if selected:
+            selected_keys.update(visible_keys)
+        else:
+            selected_keys.difference_update(visible_keys)
         self.save_and_update()
 
     def checked_or_visible_indexes(self) -> list[int]:
@@ -1717,6 +1904,7 @@ class MainWindow(QMainWindow):
         if not create_group(self.groups, name):
             QMessageBox.warning(self, "New group", "Enter a unique group name.")
             return
+        self.persist_group_colors()
         self.save_and_update(selected_group=name.strip())
 
     def rename_group(self) -> None:
@@ -1730,7 +1918,29 @@ class MainWindow(QMainWindow):
         if not rename_group(self.recipients, self.groups, group, name):
             QMessageBox.warning(self, "Rename group", "Enter a unique group name.")
             return
-        self.save_and_update(selected_group=name.strip())
+        renamed = name.strip()
+        rename_group_color(self.group_colors, group, renamed)
+        if group in self.group_selections:
+            self.group_selections[renamed] = self.group_selections.pop(group)
+        self.save_and_update(selected_group=renamed)
+
+    def change_group_color(self, target_group: str | None = None) -> None:
+        active_group = self.current_group_filter()
+        group = target_group or self.current_named_group()
+        if group in {None, ALL_RECIPIENTS, DEFAULT_GROUP} or group not in self.groups:
+            return
+        dialog = GroupColorDialog(self, self.group_color(group))
+        if dialog.exec() != GroupColorDialog.Accepted:
+            return
+        color = dialog.selected_color()
+        if color not in GROUP_COLOR_PALETTE:
+            return
+        self.group_colors[group] = color
+        self.persist_group_colors()
+        error = save_recipient_data(self.recipients, self.groups, self.settings)
+        self.refresh_group_list(active_group)
+        if error:
+            QMessageBox.warning(self, "Group color", error)
 
     def delete_group(self) -> None:
         group = self.current_named_group()
@@ -1741,6 +1951,8 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.Yes:
             return
         delete_group(self.recipients, self.groups, group)
+        delete_group_color(self.group_colors, group)
+        self.group_selections.pop(group, None)
         self.save_and_update(selected_group=ALL_RECIPIENTS)
 
     def assign_checked_to_group(self) -> None:
@@ -1768,10 +1980,19 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Remove from group", "Open a group before removing checked recipients from it.")
             return
         remove_from_group(self.recipients, indexes, group)
+        self.selected_phone_keys(group).difference_update(
+            recipient_phone_key(self.recipients[index]) for index in indexes
+        )
         self.save_and_update(selected_group=group)
 
     def copy_selected(self) -> None:
-        selection = self.scope_selection(self.copy_scope_combo.currentData())
+        self.copy_recipients(self.copy_scope_combo.currentData())
+
+    def copy_checked_recipients(self) -> None:
+        self.copy_recipients(SCOPE_SELECTION)
+
+    def copy_recipients(self, scope: str) -> None:
+        selection = self.scope_selection(scope)
         if not selection.recipients:
             QMessageBox.information(self, "Copy checked numbers", selection.empty_reason)
             return
@@ -1860,6 +2081,8 @@ class MainWindow(QMainWindow):
         self.recipients = recipients
         self.groups = groups
         self.settings = settings
+        self.group_selections = self.load_group_selections()
+        self.group_colors = ensure_group_colors(self.groups, self.settings.get("group_colors"))
         self.last_imported_numbers = []
         self.set_phone_format(self.settings.get("phone_format"))
         self.save_and_update(selected_group=ALL_RECIPIENTS)
@@ -1871,6 +2094,8 @@ class MainWindow(QMainWindow):
             return
         self.recipients.clear()
         self.groups.clear()
+        self.group_selections.clear()
+        self.group_colors.clear()
         self.save_and_update(selected_group=ALL_RECIPIENTS)
 
     def show_about(self) -> None:
@@ -1889,6 +2114,9 @@ class MainWindow(QMainWindow):
         self.groups = collect_groups(self.recipients, self.groups)
         if self.recent_group not in self.groups:
             self.recent_group = DEFAULT_GROUP
+        self.persist_group_selections()
+        self.persist_group_colors()
+        self.sync_current_selection_flags(selected_group)
         error = save_recipient_data(self.recipients, self.groups, self.settings)
         self.refresh_group_list(selected_group)
         self.refresh_table()
@@ -1897,8 +2125,9 @@ class MainWindow(QMainWindow):
 
     def update_counts(self) -> None:
         visible_indexes = self.checked_or_visible_indexes()
-        visible_selected = sum(1 for index in visible_indexes if self.recipients[index].get("selected"))
-        total_selected = sum(1 for recipient in self.recipients if recipient.get("selected"))
+        checked_indexes = set(self.checked_recipient_indexes())
+        visible_selected = sum(1 for index in visible_indexes if index in checked_indexes)
+        total_selected = len(checked_indexes)
         current_group = self.current_group_filter()
         group_count = len(self.scope_selection(SCOPE_GROUP).recipients)
         search_count = len(visible_indexes)

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from app.main import MainWindow, RecipientTableDelegate
 from app.storage import make_saved_data, parse_saved_data
-from core.groups import DEFAULT_GROUP, checked_recipient_indexes
+from core.groups import ALL_RECIPIENTS, DEFAULT_GROUP, recipient_phone_key
 
 
 def app() -> QApplication:
@@ -51,6 +51,10 @@ class SelectionActionTests(unittest.TestCase):
                 window.refresh_table()
                 return
         raise AssertionError(f"group not found: {group}")
+
+    def check_recipient(self, window: MainWindow, index: int, group: str = ALL_RECIPIENTS) -> None:
+        window.selected_phone_keys(group).add(recipient_phone_key(window.recipients[index]))
+        window.refresh_table()
 
     def test_checkbox_delegate_toggles_integer_checked_state_off(self):
         class Event:
@@ -110,9 +114,8 @@ class SelectionActionTests(unittest.TestCase):
     def test_delete_uses_checked_rows_without_highlighted_row(self):
         window = self.make_window()
         self.addCleanup(window.close)
-        window.recipients[0]["selected"] = True
-        window.recipients[2]["selected"] = True
-        window.refresh_table()
+        self.check_recipient(window, 0)
+        self.check_recipient(window, 2)
         window.table.clearSelection()
 
         with patch("app.main.DeleteConfirmationDialog") as confirmation:
@@ -120,9 +123,9 @@ class SelectionActionTests(unittest.TestCase):
             confirmation.return_value.exec.return_value = QDialog.Accepted
             window.delete_selected()
 
-        confirmation.assert_called_once_with(2, window)
+        confirmation.assert_called_once_with(2, window, group_name="All Recipients")
         self.assertEqual([recipient["phone"] for recipient in window.recipients], ["+16282222222"])
-        self.assertEqual(checked_recipient_indexes(window.recipients), [])
+        self.assertEqual(window.checked_recipient_indexes(), [])
 
     def test_delete_ignores_highlighted_unchecked_rows(self):
         window = self.make_window()
@@ -140,8 +143,7 @@ class SelectionActionTests(unittest.TestCase):
     def test_single_recipient_deletion_uses_highlighted_row(self):
         window = self.make_window()
         self.addCleanup(window.close)
-        window.recipients[2]["selected"] = True
-        window.refresh_table()
+        self.check_recipient(window, 2)
         window.table.selectRow(1)
 
         with patch("app.main.QMessageBox.question", return_value=QMessageBox.Yes):
@@ -175,15 +177,17 @@ class SelectionActionTests(unittest.TestCase):
     def test_clear_selection_affects_only_visible_recipients(self):
         window = self.make_window()
         self.addCleanup(window.close)
-        for recipient in window.recipients:
-            recipient["selected"] = True
+        self.check_recipient(window, 0, "Caregivers")
+        self.check_recipient(window, 1, "Caregivers")
+        self.check_recipient(window, 2, "Follow-up")
         self.select_group(window, "Caregivers")
 
         window.set_all_visible(False)
 
         self.assertFalse(window.recipients[0]["selected"])
         self.assertFalse(window.recipients[1]["selected"])
-        self.assertTrue(window.recipients[2]["selected"])
+        self.select_group(window, "Follow-up")
+        self.assertEqual(window.checked_recipient_indexes(), [2])
 
     def test_search_filtered_select_all(self):
         window = self.make_window()
@@ -199,9 +203,8 @@ class SelectionActionTests(unittest.TestCase):
     def test_delete_selected_deletes_only_checked_recipients(self):
         window = self.make_window()
         self.addCleanup(window.close)
-        window.recipients[0]["selected"] = True
-        window.recipients[2]["selected"] = True
-        window.refresh_table()
+        self.check_recipient(window, 0)
+        self.check_recipient(window, 2)
 
         with patch("app.main.DeleteConfirmationDialog") as confirmation:
             confirmation.Accepted = QDialog.Accepted
@@ -233,7 +236,7 @@ class SelectionActionTests(unittest.TestCase):
         handled = window.eventFilter(window.search, event)
 
         self.assertFalse(handled)
-        self.assertEqual(checked_recipient_indexes(window.recipients), [])
+        self.assertEqual(window.checked_recipient_indexes(), [])
 
     def test_action_states_follow_highlight_checks_search_group_and_deletion(self):
         window = self.make_window()
@@ -266,16 +269,10 @@ class SelectionActionTests(unittest.TestCase):
         self.select_group(window, "Follow-up")
         self.app.processEvents()
         self.assertFalse(window.menu_clear_selection_action.isEnabled())
-        self.assertTrue(window.menu_delete_selected_action.isEnabled())
-        self.assertFalse(window.menu_edit_action.isEnabled())
-
-        with patch("app.main.DeleteConfirmationDialog") as confirmation:
-            confirmation.Accepted = QDialog.Accepted
-            confirmation.return_value.exec.return_value = QDialog.Accepted
-            window.delete_selected()
-
         self.assertFalse(window.menu_delete_selected_action.isEnabled())
-        self.assertFalse(window.menu_clear_selection_action.isEnabled())
+        self.assertFalse(window.menu_edit_action.isEnabled())
+        self.select_group(window, ALL_RECIPIENTS)
+        self.assertTrue(window.menu_delete_selected_action.isEnabled())
 
     def test_search_clears_highlight_but_preserves_checked_recipients_for_deletion(self):
         window = self.make_window()
@@ -287,12 +284,12 @@ class SelectionActionTests(unittest.TestCase):
         window.table.item(1, 0).setCheckState(Qt.Checked)
         window.table.item(2, 0).setCheckState(Qt.Checked)
         self.app.processEvents()
-        self.assertEqual(checked_recipient_indexes(window.recipients), [1, 2])
+        self.assertEqual(window.checked_recipient_indexes(), [1, 2])
 
         window.search.setText("628")
         self.app.processEvents()
         self.assertIsNone(window.selected_visible_index())
-        self.assertEqual(checked_recipient_indexes(window.recipients), [1, 2])
+        self.assertEqual(window.checked_recipient_indexes(), [1, 2])
 
         window.search.clear()
         self.app.processEvents()
@@ -308,6 +305,150 @@ class SelectionActionTests(unittest.TestCase):
 
         self.assertEqual([recipient["phone"] for recipient in window.recipients], ["+14151111111"])
         self.assertIsNone(window.selected_visible_index())
+
+    def test_group_switching_restores_independent_checked_state(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+
+        self.select_group(window, "Caregivers")
+        window.table.item(0, 0).setCheckState(Qt.Checked)
+        self.select_group(window, "Follow-up")
+        window.table.item(0, 0).setCheckState(Qt.Checked)
+
+        self.select_group(window, "Caregivers")
+        self.assertEqual(window.checked_recipient_indexes(), [0])
+        self.assertEqual(window.table.item(0, 0).checkState(), Qt.Checked)
+        self.assertEqual(window.table.item(1, 0).checkState(), Qt.Unchecked)
+        self.assertIsNone(window.selected_visible_index())
+
+        self.select_group(window, "Follow-up")
+        self.assertEqual(window.checked_recipient_indexes(), [2])
+        self.assertEqual(window.table.item(0, 0).checkState(), Qt.Checked)
+
+    def test_same_recipient_can_have_independent_selection_in_each_group(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+        window.recipients[0]["groups"] = ["Caregivers", "Follow-up"]
+        window.refresh_group_list()
+
+        self.select_group(window, "Caregivers")
+        window.table.item(0, 0).setCheckState(Qt.Checked)
+        self.select_group(window, "Follow-up")
+
+        self.assertEqual(window.checked_recipient_indexes(), [])
+        self.assertEqual(window.table.item(0, 0).checkState(), Qt.Unchecked)
+
+        window.table.item(0, 0).setCheckState(Qt.Checked)
+        self.select_group(window, "Caregivers")
+        self.assertEqual(window.checked_recipient_indexes(), [0])
+
+    def test_select_all_and_clear_selection_are_group_local(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+        self.check_recipient(window, 2, "Follow-up")
+        self.select_group(window, "Caregivers")
+
+        window.set_all_visible(True)
+        self.assertEqual(window.checked_recipient_indexes(), [0, 1])
+
+        window.set_all_visible(False)
+        self.assertEqual(window.checked_recipient_indexes(), [])
+        self.select_group(window, "Follow-up")
+        self.assertEqual(window.checked_recipient_indexes(), [2])
+
+    def test_search_preserves_hidden_checks_within_current_group(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+        self.select_group(window, "Caregivers")
+        window.set_all_visible(True)
+
+        window.search.setText("415")
+        self.assertEqual(window.table.rowCount(), 1)
+        self.assertEqual(window.table.item(0, 0).checkState(), Qt.Checked)
+        window.search.clear()
+
+        self.assertEqual(window.checked_recipient_indexes(), [0, 1])
+        self.assertEqual([window.table.item(row, 0).checkState() for row in range(2)], [Qt.Checked, Qt.Checked])
+
+    def test_clear_selection_affects_only_visible_search_results(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+        self.select_group(window, "Caregivers")
+        window.set_all_visible(True)
+        window.search.setText("415")
+
+        window.set_all_visible(False)
+        window.search.clear()
+
+        self.assertEqual(window.checked_recipient_indexes(), [1])
+        self.assertEqual(window.table.item(0, 0).checkState(), Qt.Unchecked)
+        self.assertEqual(window.table.item(1, 0).checkState(), Qt.Checked)
+
+    def test_copy_selected_uses_only_current_group_checks(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+        self.check_recipient(window, 0, "Caregivers")
+        self.check_recipient(window, 2, "Follow-up")
+        self.select_group(window, "Caregivers")
+        window.copy_scope_combo.setCurrentIndex(1)
+
+        with patch("app.main.QMessageBox.information"):
+            window.copy_checked_recipients()
+
+        self.assertEqual(QApplication.clipboard().text(), "+14151111111")
+
+    def test_delete_selected_uses_only_current_group_checks_and_names_group(self):
+        window = self.make_window()
+        self.addCleanup(window.close)
+        self.check_recipient(window, 0, "Caregivers")
+        self.check_recipient(window, 2, "Follow-up")
+        self.select_group(window, "Caregivers")
+
+        with patch("app.main.DeleteConfirmationDialog") as confirmation:
+            confirmation.Accepted = QDialog.Accepted
+            confirmation.return_value.exec.return_value = QDialog.Accepted
+            window.delete_selected()
+
+        confirmation.assert_called_once_with(1, window, group_name="Caregivers")
+        self.assertEqual([recipient["phone"] for recipient in window.recipients], ["+16282222222", "+17073333333"])
+        self.select_group(window, "Follow-up")
+        self.assertEqual(window.checked_recipient_indexes(), [1])
+
+    def test_legacy_global_selection_migrates_to_all_recipients_only(self):
+        with patch(
+            "app.main.load_recipient_data",
+            return_value=([recipient("+14151111111", "Caregivers", selected=True)], [DEFAULT_GROUP, "Caregivers"], {}, None),
+        ):
+            window = MainWindow()
+        self.addCleanup(window.close)
+
+        self.assertEqual(window.checked_recipient_indexes(), [0])
+        self.select_group(window, "Caregivers")
+        self.assertEqual(window.checked_recipient_indexes(), [])
+
+    def test_group_selection_settings_persist_through_save_and_reload(self):
+        saved = {}
+
+        def fake_save(recipients, groups, settings):
+            saved["settings"] = dict(settings)
+            return None
+
+        window = self.make_window()
+        self.addCleanup(window.close)
+        window.save_and_update = MainWindow.save_and_update.__get__(window, MainWindow)
+        self.select_group(window, "Caregivers")
+
+        with patch("app.main.save_recipient_data", side_effect=fake_save):
+            window.table.item(1, 0).setCheckState(Qt.Checked)
+
+        with patch(
+            "app.main.load_recipient_data",
+            return_value=(window.recipients, window.groups, saved["settings"], None),
+        ):
+            reloaded = MainWindow()
+        self.addCleanup(reloaded.close)
+        self.select_group(reloaded, "Caregivers")
+        self.assertEqual(reloaded.checked_recipient_indexes(), [1])
 
     def test_empty_state_after_deleting_last_recipient(self):
         window = self.make_window()
