@@ -42,13 +42,14 @@ from app.dialogs import (
     DeleteConfirmationDialog,
     ExportDialog,
     GroupColorDialog,
+    GroupNameDialog,
     ImportPreviewDialog,
     PasteListDialog,
     PersonDialog,
 )
 from app.storage import load_recipient_data, save_recipient_data
 from app.theme import DANGER_BUTTON, PRIMARY_BUTTON, SECONDARY_BUTTON, SUBTLE_BUTTON, apply_app_theme, mark_button
-from app.ui_helpers import checked_status_text, empty_state_message, group_recipient_count, workspace_title
+from app.ui_helpers import checked_status_text, empty_state_message, workspace_title
 from core.exporting import (
     COPY_DIGITS,
     COPY_DISPLAYED,
@@ -73,12 +74,14 @@ from core.groups import (
     count_duplicate_phone_numbers,
     create_group,
     DEFAULT_GROUP,
+    DEFAULT_GROUP_COLOR,
     delete_group,
     delete_group_color,
     ensure_group_colors,
     find_recipient_index_by_phone,
     filtered_recipient_indexes,
     GROUP_COLOR_PALETTE,
+    group_name_error,
     remove_from_group,
     valid_recipient_groups,
     preferred_group,
@@ -93,6 +96,19 @@ from core.groups import (
 )
 from core.importing import add_import_rows as apply_import_rows
 from core.importing import preview_import_file, preview_summary, remove_imported_numbers
+from core.group_tree import (
+    add_group_record,
+    children_of,
+    group_scope_names,
+    move_group_record,
+    normalize_group_tree,
+    record_by_id,
+    record_by_name,
+    remove_group_records,
+    resolved_group_color,
+    serialize_group_tree,
+    visible_group_records,
+)
 from core.phone import PHONE_FORMATS, format_phone_number, normalize_us_phone
 from core.version import __version__
 
@@ -346,6 +362,19 @@ def is_checked_state(value) -> bool:
     return getattr(value, "value", value) == Qt.Checked.value
 
 
+def accessible_group_text_color(color: str) -> str:
+    candidate = QColor(color)
+    def luminance(value: QColor) -> float:
+        channels = []
+        for channel in (value.redF(), value.greenF(), value.blueF()):
+            channels.append(channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+    while (1.05 / (luminance(candidate) + 0.05)) < 4.5:
+        candidate = candidate.darker(112)
+    return candidate.name()
+
+
 class RecipientTableDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option, index) -> None:
         painter.save()
@@ -410,6 +439,17 @@ class GroupRowWidget(QWidget):
     def set_active(self, active: bool) -> None:
         if self.active != active:
             self.active = active
+            badge = self.findChild(QLabel, "GroupCountBadge")
+            if badge:
+                if active:
+                    text = accessible_group_text_color(self.color.name())
+                    badge.setStyleSheet(
+                        f"color: {text}; background: rgba({self.color.red()}, {self.color.green()}, "
+                        f"{self.color.blue()}, 24); border: 1px solid rgba({self.color.red()}, "
+                        f"{self.color.green()}, {self.color.blue()}, 85);"
+                    )
+                else:
+                    badge.setStyleSheet("")
             self.update()
 
     def enterEvent(self, event) -> None:
@@ -447,6 +487,10 @@ class MainWindow(QMainWindow):
         self.resize(LayoutMetrics.DEFAULT_WINDOW)
         self.setMinimumSize(LayoutMetrics.MIN_WINDOW)
         self.recipients, self.groups, self.settings, load_error = load_recipient_data()
+        self.group_tree = normalize_group_tree(
+            self.groups, self.settings.get("group_tree"), self.settings.get("group_colors")
+        )
+        self.settings["group_tree"] = serialize_group_tree(self.group_tree)
         self.group_selections = self.load_group_selections()
         self.group_colors = ensure_group_colors(self.groups, self.settings.get("group_colors"))
         self.persist_group_colors()
@@ -533,22 +577,31 @@ class MainWindow(QMainWindow):
         self.more_button = more_button
 
         self.group_list = QListWidget()
+        self.group_list.setAccessibleName("Groups")
         self.group_list.currentItemChanged.connect(self.group_changed)
         self.group_list.setMinimumWidth(0)
         self.group_list.setSpacing(LayoutMetrics.LIST_ITEM_SPACING)
         self.group_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.group_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.group_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.group_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.group_list.customContextMenuRequested.connect(self.show_group_context_menu)
+        self.group_list.installEventFilter(self)
 
         new_group_button = icon_button("New Group", "add")
         rename_group_button = icon_button("Rename", "edit")
         change_group_color_button = icon_button("Change Color", "palette")
         delete_group_button = icon_button("Delete", "trash", DANGER_BUTTON, "#d24b4b")
-        new_group_button.clicked.connect(self.create_group)
         rename_group_button.clicked.connect(self.rename_group)
         change_group_color_button.clicked.connect(lambda _checked=False: self.change_group_color())
         delete_group_button.clicked.connect(self.delete_group)
         self.change_group_color_button = change_group_color_button
+
+        self.create_subgroup_actions = []
+        group_create_menu = QMenu(self)
+        group_create_menu.addAction("Create Top-Level Group", lambda: self.create_group())
+        self.create_subgroup_actions.append(group_create_menu.addAction("Create Subgroup", self.create_subgroup))
+        new_group_button.setMenu(group_create_menu)
 
         group_title = QLabel("Groups")
         group_title.setObjectName("SectionTitle")
@@ -556,13 +609,17 @@ class MainWindow(QMainWindow):
         top_new_group_button.setObjectName("IconButton")
         top_new_group_button.setFixedSize(LayoutMetrics.ICON_BUTTON_SIZE, LayoutMetrics.ICON_BUTTON_SIZE)
         top_new_group_button.setToolTip("New Group")
-        top_new_group_button.clicked.connect(self.create_group)
+        top_group_create_menu = QMenu(self)
+        top_group_create_menu.addAction("Create Top-Level Group", lambda: self.create_group())
+        self.create_subgroup_actions.append(top_group_create_menu.addAction("Create Subgroup", self.create_subgroup))
+        top_new_group_button.setMenu(top_group_create_menu)
         group_header = QHBoxLayout()
         group_header.setSpacing(LayoutMetrics.SPACING_SM)
         group_header.addWidget(group_title)
         group_header.addStretch(1)
         group_header.addWidget(top_new_group_button)
         group_tools = QVBoxLayout()
+        self.group_tools_layout = group_tools
         group_tools.setContentsMargins(
             LayoutMetrics.SIDEBAR_PADDING,
             LayoutMetrics.SIDEBAR_PADDING,
@@ -926,6 +983,21 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.KeyPress or not self.shortcut_focus_is_inside_window():
             return super().eventFilter(watched, event)
 
+        if watched is self.group_list and event.key() in (Qt.Key_Left, Qt.Key_Right):
+            record = record_by_id(self.group_tree, self.current_group_id())
+            if record is None:
+                return False
+            if event.key() == Qt.Key_Left:
+                if children_of(self.group_tree, record["id"]) and record.get("expanded", True):
+                    self.toggle_group_expanded(record["id"])
+                    return True
+                if record.get("parent_id"):
+                    self.select_group_id(record["parent_id"])
+                    return True
+            elif children_of(self.group_tree, record["id"]) and not record.get("expanded", True):
+                self.toggle_group_expanded(record["id"])
+                return True
+
         if event.matches(QKeySequence.Paste):
             if editable_text_widget_has_focus():
                 return False
@@ -957,6 +1029,13 @@ class MainWindow(QMainWindow):
 
         return super().eventFilter(watched, event)
 
+    def select_group_id(self, group_id: str) -> None:
+        for row in range(self.group_list.count()):
+            item = self.group_list.item(row)
+            if item.data(Qt.UserRole + 1) == group_id:
+                self.group_list.setCurrentRow(row)
+                return
+
     def shortcut_focus_is_inside_window(self) -> bool:
         focused = QApplication.focusWidget()
         return focused is None or focused is self or self.isAncestorOf(focused)
@@ -976,6 +1055,17 @@ class MainWindow(QMainWindow):
         if group == ALL_RECIPIENTS:
             return None
         return group
+
+    def current_group_id(self) -> str | None:
+        item = self.group_list.currentItem()
+        return item.data(Qt.UserRole + 1) if item is not None else None
+
+    def current_group_scope(self):
+        group = self.current_group_filter()
+        if group == ALL_RECIPIENTS:
+            return ALL_RECIPIENTS
+        names = group_scope_names(self.group_tree, self.current_group_id())
+        return names or [group]
 
     def load_group_selections(self) -> dict[str, set[str]]:
         saved = self.settings.get("group_selections")
@@ -998,12 +1088,13 @@ class MainWindow(QMainWindow):
     def sync_current_selection_flags(self, group: str | None = None) -> None:
         group = group or self.current_group_filter()
         selected_keys = self.selected_phone_keys(group)
+        scope = set(self.current_group_scope()) if group == self.current_group_filter() and group != ALL_RECIPIENTS else {group}
         for recipient in self.recipients:
             key = recipient_phone_key(recipient)
             recipient["selected"] = bool(
                 key
                 and key in selected_keys
-                and (group == ALL_RECIPIENTS or group in valid_recipient_groups(recipient, self.groups))
+                and (group == ALL_RECIPIENTS or bool(scope.intersection(valid_recipient_groups(recipient, self.groups))))
             )
 
     def persist_group_selections(self) -> None:
@@ -1012,7 +1103,12 @@ class MainWindow(QMainWindow):
         for recipient in self.recipients:
             key = recipient_phone_key(recipient)
             if key:
-                scopes_by_key[key] = {ALL_RECIPIENTS, *valid_recipient_groups(recipient, self.groups)}
+                memberships = set(valid_recipient_groups(recipient, self.groups))
+                scopes = {ALL_RECIPIENTS, *memberships}
+                for record in self.group_tree:
+                    if memberships.intersection(group_scope_names(self.group_tree, record["id"])):
+                        scopes.add(record["name"])
+                scopes_by_key[key] = scopes
         serialized: dict[str, list[str]] = {}
         for group, selected_keys in self.group_selections.items():
             if group not in valid_scopes:
@@ -1040,11 +1136,20 @@ class MainWindow(QMainWindow):
             selected_keys.difference_update(keys)
 
     def persist_group_colors(self) -> None:
-        self.group_colors = ensure_group_colors(self.groups, self.group_colors)
-        self.settings["group_colors"] = dict(self.group_colors)
+        self.group_tree = normalize_group_tree(self.groups, self.group_tree, self.group_colors)
+        self.group_colors = {record["name"]: self.group_color(record["name"]) for record in self.group_tree}
+        self.settings["group_colors"] = {
+            record["id"]: record["color"] for record in self.group_tree if record.get("color")
+        }
+        self.settings["group_tree"] = serialize_group_tree(self.group_tree)
 
     def group_color(self, group: str) -> str:
-        return resolve_group_color(group, self.group_colors)
+        if group == ALL_RECIPIENTS:
+            return resolve_group_color(group, self.group_colors)
+        if group == DEFAULT_GROUP:
+            return DEFAULT_GROUP_COLOR
+        record = record_by_name(self.group_tree, group)
+        return resolved_group_color(self.group_tree, record["id"]) if record else resolve_group_color(group, self.group_colors)
 
     def group_changed(self, _current=None, _previous=None) -> None:
         if self._building_groups:
@@ -1058,6 +1163,8 @@ class MainWindow(QMainWindow):
             return
         group = self.current_group_filter()
         self.change_group_color_button.setVisible(group not in {ALL_RECIPIENTS, DEFAULT_GROUP})
+        for action in getattr(self, "create_subgroup_actions", []):
+            action.setEnabled(group not in {ALL_RECIPIENTS, DEFAULT_GROUP})
 
     def preferred_group(self) -> str:
         return preferred_group(self.current_named_group(), self.recent_group, self.groups)
@@ -1065,20 +1172,25 @@ class MainWindow(QMainWindow):
     def refresh_group_list(self, selected_group: str | None = None) -> None:
         current = selected_group or self.current_group_filter()
         self.groups = collect_groups(self.recipients, self.groups)
+        self.group_tree = normalize_group_tree(self.groups, self.group_tree, self.group_colors)
+        self.settings["group_tree"] = serialize_group_tree(self.group_tree)
         self._building_groups = True
         self.group_list.clear()
         for label, value in [(ALL_RECIPIENTS_LABEL, ALL_RECIPIENTS)]:
             item = QListWidgetItem("")
             item.setData(Qt.UserRole, value)
+            item.setData(Qt.UserRole + 1, None)
             item.setSizeHint(QSize(0, LayoutMetrics.SIDEBAR_ROW_HEIGHT))
             self.group_list.addItem(item)
-            self.group_list.setItemWidget(item, self.group_row_widget(label, value))
-        for group in self.groups:
+            self.group_list.setItemWidget(item, self.group_row_widget(label, value, None, 0))
+        for record, depth in visible_group_records(self.group_tree):
+            group = record["name"]
             item = QListWidgetItem("")
             item.setData(Qt.UserRole, group)
+            item.setData(Qt.UserRole + 1, record["id"])
             item.setSizeHint(QSize(0, LayoutMetrics.SIDEBAR_ROW_HEIGHT))
             self.group_list.addItem(item)
-            self.group_list.setItemWidget(item, self.group_row_widget(group, group))
+            self.group_list.setItemWidget(item, self.group_row_widget(group, group, record["id"], depth))
 
         row_to_select = 0
         for row in range(self.group_list.count()):
@@ -1090,31 +1202,49 @@ class MainWindow(QMainWindow):
         self.update_group_row_states()
         self.update_group_action_states()
 
-    def group_row_widget(self, label: str, group: str) -> QWidget:
+    def group_row_widget(self, label: str, group: str, group_id: str | None, depth: int) -> QWidget:
         row = GroupRowWidget(self.group_color(group))
         row.setObjectName("GroupRow")
         row.setProperty("groupName", group)
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(LayoutMetrics.GROUP_ROW_MARGIN_X, 0, LayoutMetrics.GROUP_ROW_MARGIN_X, 0)
-        layout.setSpacing(LayoutMetrics.SPACING_SM)
+        row_margin = min(LayoutMetrics.GROUP_ROW_MARGIN_X, LayoutMetrics.SPACING_XXS)
+        layout.setContentsMargins(row_margin + depth * LayoutMetrics.SPACING_XS, 0, row_margin, 0)
+        layout.setSpacing(LayoutMetrics.SPACING_XXS)
         icon_name, icon_color = self.group_icon(group)
+        children = children_of(self.group_tree, group_id) if group_id else []
+        if children:
+            record = record_by_id(self.group_tree, group_id)
+            expanded = bool(record and record.get("expanded", True))
+            arrow = QPushButton()
+            arrow.setObjectName("GroupExpandButton")
+            arrow.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown if expanded else QStyle.SP_ArrowRight))
+            arrow.setIconSize(QSize(12, 12))
+            arrow.setFixedSize(16, 24)
+            arrow.setToolTip("Collapse group" if expanded else "Expand group")
+            arrow.setAccessibleName(arrow.toolTip())
+            arrow.clicked.connect(lambda _checked=False, value=group_id: self.toggle_group_expanded(value))
+            layout.addWidget(arrow)
+        elif depth == 0:
+            spacer = QWidget()
+            spacer.setFixedWidth(16)
+            layout.addWidget(spacer)
         icon = SvgIconLabel(icon_name, icon_color, 20)
         icon.setObjectName("GroupIcon")
         icon.setProperty("groupName", group)
-        color_dot = QLabel()
-        color_dot.setObjectName("GroupColorDot")
-        color_dot.setFixedSize(8, 8)
-        color_dot.setStyleSheet(f"background: {self.group_color(group)}; border-radius: 4px;")
+        icon.setProperty("groupColor", icon_color)
         name = ElidedLabel(label)
         name.setObjectName("GroupName")
+        name.setProperty("groupColor", icon_color)
         name.setMinimumWidth(0)
         name.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        count = QLabel(str(group_recipient_count(self.recipients, group)))
+        name.setStyleSheet(f"color: {accessible_group_text_color(self.group_color(group))};")
+        name.setToolTip(label)
+        scope = ALL_RECIPIENTS if group == ALL_RECIPIENTS else group_scope_names(self.group_tree, group_id)
+        count = QLabel(str(len(filtered_recipient_indexes(self.recipients, scope or [group]))))
         count.setObjectName("GroupCountBadge")
         count.setAlignment(Qt.AlignCenter)
-        count.setMinimumWidth(30)
+        count.setFixedWidth(max(30, count.fontMetrics().horizontalAdvance(count.text()) + 14))
         layout.addWidget(icon)
-        layout.addWidget(color_dot)
         layout.addWidget(name, stretch=1)
         layout.addWidget(count)
         return row
@@ -1134,13 +1264,17 @@ class MainWindow(QMainWindow):
             return "groups", BRAND_BLUE
         if group == DEFAULT_GROUP:
             return "home", "#53627c"
-        if group == "Female Mandarin":
-            return "groups", "#f05a75"
-        if group == "Male Cantonese":
-            return "groups", BRAND_BLUE
-        if group == "Follow Up":
-            return "star", "#f2a91f"
-        return "groups", "#53627c"
+        return "groups", accessible_group_text_color(self.group_color(group))
+
+    def toggle_group_expanded(self, group_id: str) -> None:
+        record = record_by_id(self.group_tree, group_id)
+        if record is None or not children_of(self.group_tree, group_id):
+            return
+        active = self.current_group_filter()
+        record["expanded"] = not record.get("expanded", True)
+        self.settings["group_tree"] = serialize_group_tree(self.group_tree)
+        save_recipient_data(self.recipients, self.groups, self.settings)
+        self.refresh_group_list(active)
 
     def refresh_table(self) -> None:
         if self._building_groups:
@@ -1149,7 +1283,7 @@ class MainWindow(QMainWindow):
         query = self.search.text().strip().lower()
         indexes = filtered_recipient_indexes(
             self.recipients,
-            self.current_group_filter(),
+            self.current_group_scope(),
             query,
             self.current_phone_format(),
             self.sort_field_combo.currentData(),
@@ -1227,6 +1361,14 @@ class MainWindow(QMainWindow):
                 )
                 self.sidebar.setMinimumWidth(sidebar_width)
                 self.sidebar.setMaximumWidth(sidebar_width)
+            if hasattr(self, "group_tools_layout"):
+                sidebar_padding = fluid_value(width, LayoutMetrics.SPACING_XXS, LayoutMetrics.SIDEBAR_PADDING)
+                self.group_tools_layout.setContentsMargins(
+                    sidebar_padding,
+                    sidebar_padding,
+                    sidebar_padding,
+                    sidebar_padding,
+                )
             margin_x = fluid_value(width, LayoutMetrics.SPACING_XS, LayoutMetrics.PAGE_MARGIN_X)
             margin_y = fluid_value(width, LayoutMetrics.SPACING_SM, LayoutMetrics.PAGE_MARGIN_Y)
             self.body_layout.setContentsMargins(margin_x, margin_y, margin_x, margin_y)
@@ -1882,7 +2024,7 @@ class MainWindow(QMainWindow):
         return resolve_recipient_scope(
             self.recipients,
             scope,
-            group_filter=self.current_group_filter(),
+            group_filter=self.current_group_scope(),
             query=self.search.text(),
             phone_format=self.current_phone_format(),
             sort_field=self.sort_field_combo.currentData(),
@@ -1897,28 +2039,58 @@ class MainWindow(QMainWindow):
             SCOPE_SELECTION: len(self.scope_selection(SCOPE_SELECTION).recipients),
         }
 
-    def create_group(self) -> None:
-        name, ok = QInputDialog.getText(self, "New group", "Group name")
-        if not ok:
+    def create_group(self, parent_id: str | None = None) -> None:
+        title = "New subgroup" if parent_id else "New group"
+        dialog = GroupNameDialog(
+            self, title=title, validator=lambda value: group_name_error(value, self.groups)
+        )
+        if dialog.exec() != GroupNameDialog.Accepted:
             return
+        name = dialog.group_name()
         if not create_group(self.groups, name):
-            QMessageBox.warning(self, "New group", "Enter a unique group name.")
+            QMessageBox.warning(self, title, group_name_error(name, self.groups) or "The group could not be created.")
+            return
+        record = add_group_record(self.group_tree, name.strip(), parent_id)
+        if record is None:
+            self.groups.remove(name.strip())
+            QMessageBox.warning(self, title, "That group cannot be created at this level.")
             return
         self.persist_group_colors()
         self.save_and_update(selected_group=name.strip())
+
+    def create_subgroup(self) -> None:
+        record = record_by_id(self.group_tree, self.current_group_id())
+        if record is None or record["name"] == DEFAULT_GROUP:
+            QMessageBox.information(self, "New subgroup", "Select a user-created group first.")
+            return
+        parent_id = record.get("parent_id") or record["id"]
+        self.create_group(parent_id)
 
     def rename_group(self) -> None:
         group = self.current_named_group()
         if group is None or group == DEFAULT_GROUP:
             QMessageBox.information(self, "Rename group", "Select a user-created group to rename.")
             return
-        name, ok = QInputDialog.getText(self, "Rename group", "Group name", text=group)
-        if not ok:
+        dialog = GroupNameDialog(
+            self,
+            title="Rename group",
+            initial_name=group,
+            validator=lambda value: group_name_error(value, self.groups, exclude=group),
+        )
+        if dialog.exec() != GroupNameDialog.Accepted:
             return
+        name = dialog.group_name()
         if not rename_group(self.recipients, self.groups, group, name):
-            QMessageBox.warning(self, "Rename group", "Enter a unique group name.")
+            QMessageBox.warning(
+                self,
+                "Rename group",
+                group_name_error(name, self.groups, exclude=group) or "The group could not be renamed.",
+            )
             return
         renamed = name.strip()
+        record = record_by_id(self.group_tree, self.current_group_id())
+        if record:
+            record["name"] = renamed
         rename_group_color(self.group_colors, group, renamed)
         if group in self.group_selections:
             self.group_selections[renamed] = self.group_selections.pop(group)
@@ -1935,6 +2107,9 @@ class MainWindow(QMainWindow):
         color = dialog.selected_color()
         if color not in GROUP_COLOR_PALETTE:
             return
+        record = record_by_name(self.group_tree, group)
+        if record:
+            record["color"] = color
         self.group_colors[group] = color
         self.persist_group_colors()
         error = save_recipient_data(self.recipients, self.groups, self.settings)
@@ -1947,13 +2122,88 @@ class MainWindow(QMainWindow):
         if group is None or group == DEFAULT_GROUP:
             QMessageBox.information(self, "Delete group", "Select a user-created group to delete.")
             return
-        answer = QMessageBox.question(self, "Delete group", f"Delete group '{group}'? Recipients will not be deleted.")
-        if answer != QMessageBox.Yes:
-            return
-        delete_group(self.recipients, self.groups, group)
-        delete_group_color(self.group_colors, group)
-        self.group_selections.pop(group, None)
+        record = record_by_id(self.group_tree, self.current_group_id())
+        children = children_of(self.group_tree, record["id"]) if record else []
+        promote_children = False
+        if children:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Delete group")
+            dialog.setText(f"Delete group '{group}'? Recipients will not be deleted.")
+            promote = dialog.addButton("Delete Group and Move Subgroups to Top Level", QMessageBox.AcceptRole)
+            cascade = dialog.addButton("Delete Group and Its Subgroups", QMessageBox.DestructiveRole)
+            dialog.addButton(QMessageBox.Cancel)
+            dialog.exec()
+            if dialog.clickedButton() is promote:
+                promote_children = True
+                removed_names = [group]
+            elif dialog.clickedButton() is cascade:
+                removed_names = [group, *(child["name"] for child in children)]
+            else:
+                return
+        else:
+            answer = QMessageBox.question(self, "Delete group", f"Delete group '{group}'? Recipients will not be deleted.")
+            if answer != QMessageBox.Yes:
+                return
+            removed_names = [group]
+        if record:
+            remove_group_records(self.group_tree, record["id"], promote_children)
+        for removed_name in removed_names:
+            delete_group(self.recipients, self.groups, removed_name)
+            delete_group_color(self.group_colors, removed_name)
+            self.group_selections.pop(removed_name, None)
+        self.persist_group_colors()
         self.save_and_update(selected_group=ALL_RECIPIENTS)
+
+    def move_group(self, to_top_level: bool = False) -> None:
+        record = record_by_id(self.group_tree, self.current_group_id())
+        if record is None or record["name"] == DEFAULT_GROUP:
+            return
+        if to_top_level:
+            if not move_group_record(self.group_tree, record["id"], None):
+                return
+        else:
+            candidates = [
+                item for item in self.group_tree
+                if item["id"] != record["id"] and item["name"] != DEFAULT_GROUP and item.get("parent_id") is None
+            ]
+            if not candidates:
+                QMessageBox.information(self, "Move group", "No eligible top-level group is available.")
+                return
+            names = [item["name"] for item in candidates]
+            name, ok = QInputDialog.getItem(self, "Move group", "Parent group", names, 0, False)
+            if not ok:
+                return
+            parent = next(item for item in candidates if item["name"] == name)
+            if not move_group_record(self.group_tree, record["id"], parent["id"]):
+                QMessageBox.warning(self, "Move group", "A group with subgroups cannot become a subgroup.")
+                return
+        self.persist_group_colors()
+        self.save_and_update(selected_group=record["name"])
+
+    def show_group_context_menu(self, position) -> None:
+        item = self.group_list.itemAt(position)
+        if item is None:
+            return
+        record = record_by_id(self.group_tree, item.data(Qt.UserRole + 1))
+        if record is None or record["name"] == DEFAULT_GROUP:
+            return
+        menu = QMenu(self)
+        if record.get("parent_id") is None:
+            menu.addAction("Add Subgroup", lambda: self.run_group_action(record["id"], self.create_subgroup))
+        menu.addAction("Rename", lambda: self.run_group_action(record["id"], self.rename_group))
+        menu.addAction("Change Color", lambda: self.change_group_color(record["name"]))
+        if record.get("parent_id") is None:
+            menu.addAction("Move", lambda: self.run_group_action(record["id"], self.move_group))
+        else:
+            menu.addAction("Move to Another Group", lambda: self.run_group_action(record["id"], self.move_group))
+            menu.addAction("Move to Top Level", lambda: self.run_group_action(record["id"], lambda: self.move_group(True)))
+        menu.addSeparator()
+        menu.addAction("Delete", lambda: self.run_group_action(record["id"], self.delete_group))
+        menu.exec(self.group_list.viewport().mapToGlobal(position))
+
+    def run_group_action(self, group_id: str, callback) -> None:
+        self.select_group_id(group_id)
+        callback()
 
     def assign_checked_to_group(self) -> None:
         indexes = self.checked_recipient_indexes()
@@ -2081,11 +2331,15 @@ class MainWindow(QMainWindow):
         self.recipients = recipients
         self.groups = groups
         self.settings = settings
+        migration_warnings = self.settings.pop("migration_warnings", [])
+        self.group_tree = normalize_group_tree(self.groups, self.settings.get("group_tree"), self.settings.get("group_colors"))
         self.group_selections = self.load_group_selections()
         self.group_colors = ensure_group_colors(self.groups, self.settings.get("group_colors"))
         self.last_imported_numbers = []
         self.set_phone_format(self.settings.get("phone_format"))
         self.save_and_update(selected_group=ALL_RECIPIENTS)
+        if migration_warnings:
+            QMessageBox.warning(self, "Import backup", "\n".join(migration_warnings))
         QMessageBox.information(self, "Import backup", "Backup imported.")
 
     def clear_all(self) -> None:
@@ -2094,6 +2348,7 @@ class MainWindow(QMainWindow):
             return
         self.recipients.clear()
         self.groups.clear()
+        self.group_tree.clear()
         self.group_selections.clear()
         self.group_colors.clear()
         self.save_and_update(selected_group=ALL_RECIPIENTS)

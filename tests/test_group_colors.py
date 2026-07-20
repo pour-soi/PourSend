@@ -16,6 +16,7 @@ from core.groups import (
     ALL_RECIPIENTS,
     ALL_RECIPIENTS_COLOR,
     DEFAULT_GROUP,
+    DEFAULT_GROUP_COLOR,
     GROUP_COLOR_PALETTE,
     delete_group_color,
     ensure_group_colors,
@@ -59,16 +60,21 @@ class GroupColorTests(unittest.TestCase):
         window = self.make_window(settings={"phone_format": "e164"})
 
         self.assertEqual(list(window.group_colors), [DEFAULT_GROUP, "Friends", "Work"])
-        self.assertEqual(list(window.group_colors.values()), list(GROUP_COLOR_PALETTE[:3]))
-        self.assertEqual(window.settings["group_colors"], window.group_colors)
+        self.assertEqual(window.group_colors[DEFAULT_GROUP], DEFAULT_GROUP_COLOR)
+        self.assertEqual(list(window.group_colors.values())[1:], list(GROUP_COLOR_PALETTE[:2]))
+        self.assertEqual(len(window.settings["group_colors"]), len(window.group_colors))
+        self.assertTrue(all(group_id.count("-") == 4 for group_id in window.settings["group_colors"]))
 
     def test_new_group_receives_next_available_color(self):
         window = self.make_window(groups=[DEFAULT_GROUP])
 
-        with patch("app.main.QInputDialog.getText", return_value=("Friends", True)):
+        with patch("app.main.GroupNameDialog") as dialog:
+            dialog.Accepted = QDialog.Accepted
+            dialog.return_value.exec.return_value = QDialog.Accepted
+            dialog.return_value.group_name.return_value = "Friends"
             window.create_group()
 
-        self.assertEqual(window.group_colors["Friends"], GROUP_COLOR_PALETTE[1])
+        self.assertEqual(window.group_colors["Friends"], GROUP_COLOR_PALETTE[0])
 
     def test_group_colors_persist_through_saved_settings_and_restart(self):
         window = self.make_window()
@@ -87,7 +93,10 @@ class GroupColorTests(unittest.TestCase):
         window = self.make_window(groups=[DEFAULT_GROUP, "Friends"], settings=settings, recipients=recipients)
         self.select_group(window, "Friends")
 
-        with patch("app.main.QInputDialog.getText", return_value=("Family", True)):
+        with patch("app.main.GroupNameDialog") as dialog:
+            dialog.Accepted = QDialog.Accepted
+            dialog.return_value.exec.return_value = QDialog.Accepted
+            dialog.return_value.group_name.return_value = "Family"
             window.rename_group()
 
         self.assertNotIn("Friends", window.group_colors)
@@ -133,14 +142,17 @@ class GroupColorTests(unittest.TestCase):
         self.assertEqual(window.group_color(ALL_RECIPIENTS), ALL_RECIPIENTS_COLOR)
         self.assertNotIn(ALL_RECIPIENTS, window.group_colors)
 
-    def test_group_row_displays_color_dot_and_active_tint(self):
+    def test_group_row_colors_icon_and_name_without_color_dot(self):
         window = self.make_window(groups=[DEFAULT_GROUP, "Friends"])
         self.select_group(window, "Friends")
         item = window.group_list.currentItem()
         row = window.group_list.itemWidget(item)
-        dot = row.findChild(QLabel, "GroupColorDot")
+        icon = row.findChild(QLabel, "GroupIcon")
+        name = row.findChild(QLabel, "GroupName")
 
-        self.assertIn(window.group_color("Friends"), dot.styleSheet())
+        self.assertIsNone(row.findChild(QLabel, "GroupColorDot"))
+        self.assertEqual(icon.property("groupColor"), name.property("groupColor"))
+        self.assertIn(name.property("groupColor"), name.styleSheet())
         self.assertTrue(row.active)
         self.assertEqual(row.color.name(), window.group_color("Friends"))
 
@@ -175,9 +187,10 @@ class GroupColorTests(unittest.TestCase):
         self.assertEqual(window.recipients, before_recipients)
         self.assertEqual(window.settings["group_selections"], before_selections)
         active_row = window.group_list.itemWidget(window.group_list.currentItem())
-        color_dot = active_row.findChild(QLabel, "GroupColorDot")
+        icon = active_row.findChild(QLabel, "GroupIcon")
+        name = active_row.findChild(QLabel, "GroupName")
         self.assertEqual(active_row.color.name(), GROUP_COLOR_PALETTE[5])
-        self.assertIn(GROUP_COLOR_PALETTE[5], color_dot.styleSheet())
+        self.assertEqual(icon.property("groupColor"), name.property("groupColor"))
 
     def test_manual_color_persists_after_save_and_reload(self):
         window = self.make_window(groups=[DEFAULT_GROUP, "Friends"])
@@ -214,7 +227,10 @@ class GroupColorTests(unittest.TestCase):
             dialog.return_value.exec.return_value = QDialog.Accepted
             dialog.return_value.selected_color.return_value = GROUP_COLOR_PALETTE[4]
             window.change_group_color()
-        with patch("app.main.QInputDialog.getText", return_value=("Family", True)):
+        with patch("app.main.GroupNameDialog") as dialog:
+            dialog.Accepted = QDialog.Accepted
+            dialog.return_value.exec.return_value = QDialog.Accepted
+            dialog.return_value.group_name.return_value = "Family"
             window.rename_group()
 
         self.assertEqual(window.group_colors["Family"], GROUP_COLOR_PALETTE[4])

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import unicodedata
 from typing import Iterable
 
 from .phone import format_phone_number, normalize_us_phone, phone_search_digits
 
 
 ALL_RECIPIENTS = "__all__"
+ALL_RECIPIENTS_LABEL = "All Recipients"
 DEFAULT_GROUP = "Default"
+DEFAULT_GROUP_COLOR = "#53627c"
 ALL_RECIPIENTS_COLOR = "#64748b"
 GROUP_COLOR_PALETTE = (
     "#6685a8",
@@ -23,23 +26,39 @@ SORT_GROUP = "group"
 SORT_RECENT = "recent"
 
 
+def group_name_key(name: str) -> str:
+    return unicodedata.normalize("NFKC", str(name)).strip().casefold()
+
+
+def group_name_error(name: str, groups: Iterable[str], exclude: str | None = None) -> str | None:
+    clean_name = str(name).strip()
+    if not clean_name:
+        return "Enter a group name."
+    key = group_name_key(clean_name)
+    excluded_key = group_name_key(exclude) if exclude is not None else None
+    protected = {group_name_key(ALL_RECIPIENTS_LABEL), group_name_key(DEFAULT_GROUP)}
+    existing = {group_name_key(group) for group in groups if group_name_key(group) != excluded_key}
+    if key in protected or key in existing:
+        return f'A group named "{clean_name}" already exists. Please choose a different name.'
+    return None
+
+
 def normalize_group_names(groups: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     normalized: list[str] = []
     for group in groups:
         name = str(group).strip()
-        if not name or name in seen:
+        key = group_name_key(name)
+        if not name or key in seen:
             continue
-        seen.add(name)
+        seen.add(key)
         normalized.append(name)
     return normalized
 
 
 def ensure_default_group(groups: Iterable[str] = ()) -> list[str]:
-    normalized = normalize_group_names(groups)
-    if DEFAULT_GROUP not in normalized:
-        normalized.insert(0, DEFAULT_GROUP)
-    return normalized
+    normalized = [group for group in normalize_group_names(groups) if group_name_key(group) != group_name_key(DEFAULT_GROUP)]
+    return [DEFAULT_GROUP, *normalized]
 
 
 def normalize_group_colors(value) -> dict[str, str]:
@@ -221,7 +240,7 @@ def collect_groups(recipients: Iterable[dict], groups: Iterable[str] = ()) -> li
 
 def create_group(groups: list[str], name: str) -> bool:
     clean_name = name.strip()
-    if not clean_name or clean_name in groups:
+    if group_name_error(clean_name, groups):
         return False
     groups.append(clean_name)
     return True
@@ -229,9 +248,9 @@ def create_group(groups: list[str], name: str) -> bool:
 
 def rename_group(recipients: list[dict], groups: list[str], old_name: str, new_name: str) -> bool:
     clean_name = new_name.strip()
-    if old_name == DEFAULT_GROUP or old_name not in groups or not clean_name:
+    if old_name == DEFAULT_GROUP or old_name not in groups:
         return False
-    if clean_name != old_name and clean_name in groups:
+    if group_name_error(clean_name, groups, exclude=old_name):
         return False
 
     groups[groups.index(old_name)] = clean_name
@@ -266,9 +285,12 @@ def remove_from_group(recipients: list[dict], indexes: Iterable[int], group: str
             remove_recipient_group(recipients[index], group)
 
 
-def recipient_matches_group(recipient: dict, group_filter: str) -> bool:
+def recipient_matches_group(recipient: dict, group_filter: str | Iterable[str]) -> bool:
     if group_filter == ALL_RECIPIENTS:
         return True
+    if not isinstance(group_filter, str):
+        memberships = set(valid_recipient_groups(recipient))
+        return any(group in memberships for group in group_filter)
     return group_filter in valid_recipient_groups(recipient)
 
 
@@ -307,7 +329,7 @@ def sorted_recipient_indexes(
 
 def filtered_recipient_indexes(
     recipients: list[dict],
-    group_filter: str = ALL_RECIPIENTS,
+    group_filter: str | Iterable[str] = ALL_RECIPIENTS,
     query: str = "",
     phone_format: str = "e164",
     sort_field: str = SORT_RECENT,

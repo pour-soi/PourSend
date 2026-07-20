@@ -1,36 +1,49 @@
-# PourSend v2.2.0 — Group Selection and Colors
+# PourSend v2.3.0 — Nested Groups and Clearer Colors
 
-PourSend v2.2.0 adds independent checked-recipient selections for each group and persistent muted group colors without changing recipient or export formats.
+PourSend v2.3.0 adds two-level group organization and clearer group colors while preserving recipient records and existing import and export formats.
 
-## What's New
+## Nested Groups
 
-- Each group remembers its own checked recipients when switching views.
-- Select All and Clear Selection affect only visible results in the active group.
-- Copy Selected and Delete Selected operate only on the active group's checked recipients.
-- Existing and newly created groups receive persistent muted colors automatically.
-- User-created groups can select any color from the existing eight-color palette.
+- Create top-level groups and one level of subgroups.
+- Expand and collapse parent groups; expansion state is saved automatically.
+- Move subgroups between parent groups or promote them back to the top level.
+- Rename groups without changing their hierarchy, colors, memberships, or selections.
 
-## Improvements
+## Clearer Group Colors
 
-- Group color assignments survive restart and transfer when groups are renamed.
-- Deleted groups have their saved color assignments removed.
-- The color chooser supports visible selection, hover and focus states, arrow-key navigation, and Escape cancellation.
-- All Recipients remains fixed blue-gray, and Default cannot be manually recolored.
-- Manual color changes preserve recipients, search state, active group, row highlighting, and group selections.
+- Group icons and names now use the same muted group color.
+- The previous low-visibility color dots have been removed.
+- Subgroups can inherit their parent color or use an independently selected palette color.
+- Display colors are adjusted automatically when needed to preserve readable contrast.
 
-## Compatibility
+## Group Behavior
 
-- Existing settings are migrated automatically.
-- Recipient records and the recipient data schema are unchanged.
-- Import, CSV, copy, export, and backup formats are unchanged.
-- Recipient data remains local.
+- Selecting a parent group shows its direct recipients and recipients from its subgroups.
+- Aggregated parent views deduplicate recipients by normalized phone number.
+- Parent groups and subgroups preserve independent checked-recipient selections.
+- Deleting a group removes memberships without deleting recipients from All Recipients.
+
+## Safer Group Names
+
+- Group names are globally unique across top-level groups and subgroups.
+- Name comparison ignores case and surrounding whitespace.
+- Unicode NFKC normalization prevents visually equivalent names from being treated as different groups.
+- The All Recipients and Default system names remain protected.
+
+## Migration
+
+- Legacy flat groups migrate automatically to top-level groups.
+- Existing recipients, group colors, and group selections are preserved.
+- Conflicting legacy names are repaired deterministically with `(2)`, `(3)`, and subsequent suffixes.
+- Existing recipient and export formats remain compatible.
 
 ## Download
 
-Download `PourSend-v2.2.0-Windows.zip`, extract the complete folder, and run `PourSend.exe`. Python is not required.
+Download `PourSend-v2.3.0-Windows.zip`, extract the complete folder, and run `PourSend.exe`. Python is not required.
 
 ## Validation
 
-- 201 automated tests passed locally.
+- 224 automated tests passed.
 - Compile and syntax checks passed.
-- Windows CI build and executable smoke-test results are verified before publication.
+- macOS PySide6 Cocoa GUI acceptance passed.
+- Windows CI validates the build and executable startup; manual Windows visual validation has not yet been performed.

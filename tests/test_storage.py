@@ -69,6 +69,29 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(saved["recipients"], [])
             self.assertEqual(saved["settings"]["phone_format"], "e164")
 
+    def test_loading_duplicate_legacy_groups_repairs_names_and_returns_warning(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "recipients.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "groups": ["Clients", " clients "],
+                        "recipients": [
+                            {"phone": "+14151111111", "groups": ["Clients"]},
+                            {"phone": "+16282222222", "groups": [" clients "]},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("app.storage.data_path", return_value=path):
+                recipients, groups, _settings, warning = load_recipient_data()
+
+            self.assertEqual(groups, ["Default", "Clients", "clients (2)"])
+            self.assertEqual(recipients[1]["groups"], ["clients (2)"])
+            self.assertIn('Group "clients" was renamed to "clients (2)"', warning)
+
 
 if __name__ == "__main__":
     unittest.main()

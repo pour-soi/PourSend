@@ -151,6 +151,45 @@ class ExportingTests(unittest.TestCase):
         self.assertEqual(groups, [DEFAULT_GROUP])
         self.assertEqual(settings["phone_format"], "e164")
 
+    def test_backup_import_repairs_duplicate_group_names_and_reports_warning(self):
+        backup = {
+            "backup_version": 1,
+            "app": "PourSend",
+            "data": {
+                "version": 3,
+                "settings": {},
+                "groups": ["Clients", " clients "],
+                "recipients": [
+                    {"phone": "+14151111111", "groups": ["Clients"]},
+                    {"phone": "+16282222222", "groups": [" clients "]},
+                ],
+            },
+        }
+
+        recipients, groups, settings, _version = parse_backup_json(json.dumps(backup))
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "Clients", "clients (2)"])
+        self.assertEqual(recipients[1]["groups"], ["clients (2)"])
+        self.assertIn("migration_warnings", settings)
+
+    def test_backup_import_repairs_nfkc_equivalent_group_names(self):
+        backup = {
+            "backup_version": 1,
+            "app": "PourSend",
+            "data": {
+                "version": 3,
+                "settings": {},
+                "groups": ["équipe", "équipe"],
+                "recipients": [{"phone": "+14151111111", "groups": ["équipe"]}],
+            },
+        }
+
+        recipients, groups, settings, _version = parse_backup_json(json.dumps(backup))
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "équipe", "équipe (2)"])
+        self.assertEqual(recipients[0]["groups"], ["équipe (2)"])
+        self.assertIn("migration_warnings", settings)
+
     def test_empty_export_scope_has_clear_reason(self):
         recipients = [recipient("+14151111111", selected=False)]
 

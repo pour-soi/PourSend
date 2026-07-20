@@ -7,7 +7,7 @@ import zipfile
 from dataclasses import dataclass
 from html import escape
 
-from app.storage import make_saved_data, parse_saved_data, parse_saved_settings
+from app.storage import make_saved_data, parse_saved_data, parse_saved_settings, repair_saved_group_names
 from core.groups import ALL_RECIPIENTS, checked_recipient_indexes, filtered_recipient_indexes, valid_recipient_groups
 from core.phone import PHONE_FORMAT_E164, format_phone_number, normalize_us_phone
 
@@ -185,6 +185,7 @@ def parse_backup_json(text: str) -> tuple[list[dict], list[str], dict, int]:
     else:
         raise ValueError("Unsupported backup structure")
 
+    data, warnings = repair_saved_group_names(data)
     recipients, groups = parse_saved_data(data)
     if not isinstance(recipients, list) or not isinstance(groups, list):
         raise ValueError("Unsupported backup data")
@@ -192,7 +193,10 @@ def parse_backup_json(text: str) -> tuple[list[dict], list[str], dict, int]:
         _normalized, status = normalize_us_phone(str(recipient.get("phone", "")))
         if status != "Valid":
             raise ValueError("Backup contains invalid recipient phone data")
-    return recipients, groups, parse_saved_settings(data), version
+    settings = parse_saved_settings(data)
+    if warnings:
+        settings["migration_warnings"] = warnings
+    return recipients, groups, settings, version
 
 
 def _column_name(index: int) -> str:

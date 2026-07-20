@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.3.0 - 2026-07-20
+
+### Nested Groups
+
+- Adds top-level groups and one level of subgroups.
+- Supports expanding, collapsing, moving, and promoting subgroups.
+- Persists expansion state across application restarts.
+- Aggregates parent-group recipients across direct and subgroup memberships, deduplicated by normalized phone number.
+
+### Clearer Group Colors
+
+- Colors both the group icon and group name for clearer identification.
+- Removes the previous color dot from group rows.
+- Allows subgroups to inherit a parent color or use an independent palette color.
+- Automatically adjusts displayed group colors to maintain readable contrast.
+
+### Group Safety and Migration
+
+- Keeps parent and subgroup checked-recipient selections independent.
+- Deletes group memberships without deleting global recipient records.
+- Requires globally unique group names using trimmed, case-folded Unicode NFKC comparison.
+- Protects the All Recipients and Default system names.
+- Migrates legacy flat groups to top-level records while preserving recipients, colors, and selections.
+- Repairs conflicting legacy names deterministically with `(2)`, `(3)`, and subsequent suffixes.
+
 ## v2.2.0 - 2026-07-19
 
 ### Group-Local Selection

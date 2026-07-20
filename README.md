@@ -22,9 +22,9 @@ This is an independent, unofficial utility and is not affiliated with or endorse
 
 ## Download
 
-**Current release: v2.2.0**
+**Current release: v2.3.0**
 
-1. Download `PourSend-v2.2.0-Windows.zip` from the [official v2.2.0 GitHub Release](https://github.com/pour-soi/PourSend/releases/tag/v2.2.0).
+1. Download `PourSend-v2.3.0-Windows.zip` from the [official v2.3.0 GitHub Release](https://github.com/pour-soi/PourSend/releases/tag/v2.3.0).
 2. Extract the complete zip file to a normal folder, such as Desktop or Documents.
 3. Run `PourSend.exe` from the extracted folder.
 
@@ -33,8 +33,9 @@ No installation is required. Do not run `PourSend.exe` directly from inside the 
 ## Key Features
 
 - **Multi-group recipients:** One phone number can belong to multiple groups without duplicate recipient records.
+- **Nested groups:** Organize recipients in top-level groups and subgroups with persistent expansion state and aggregated parent views.
 - **Independent group selections:** Each group remembers its own checked recipients while visible Select All and Clear Selection stay scoped to the active group.
-- **Persistent group colors:** Groups receive muted colors automatically and user-created groups can choose from the accessible eight-color palette.
+- **Clear group colors:** Group icons and names use persistent muted colors; subgroups can inherit or override their parent color.
 - **Intelligent duplicate detection:** Existing numbers are reused during add, paste, and import workflows.
 - **Fast recipient preparation:** Check recipients, copy numbers, export lists, and batch edit group membership from the main window.
 - **Smart import:** Paste text or import TXT, CSV, and XLSX files with preview counts for new, existing, invalid, and duplicate-input numbers.
@@ -219,7 +220,7 @@ Run the automated test suite:
 python -m unittest
 ```
 
-The current suite has 201 tests covering phone normalization, copy behavior, paste parsing, CSV detection, grouping, group-local selection, persistent colors, storage migration, batch import, search, sorting, export formats, backup import/export, shortcut safety, release versioning, storage path branding, and responsive layout behavior.
+The current suite has 224 tests covering phone normalization, copy behavior, paste parsing, CSV detection, nested grouping, group-local selection, persistent colors, Unicode-safe storage migration, batch import, search, sorting, export formats, backup import/export, shortcut safety, release versioning, storage path branding, and responsive layout behavior.
 
 Design guidance lives in [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md).
 

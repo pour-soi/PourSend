@@ -148,6 +148,23 @@ class GroupTests(unittest.TestCase):
 
         self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers"])
 
+    def test_group_creation_is_globally_casefold_unique_and_protects_system_names(self):
+        groups = [DEFAULT_GROUP, "Group"]
+
+        self.assertFalse(create_group(groups, "group"))
+        self.assertFalse(create_group(groups, " Group "))
+        self.assertTrue(create_group(groups, "Straße"))
+        self.assertFalse(create_group(groups, "STRASSE"))
+        self.assertTrue(create_group(groups, "A组"))
+        self.assertFalse(create_group(groups, "Ａ组"))
+        self.assertTrue(create_group(groups, "équipe"))
+        self.assertFalse(create_group(groups, "équipe"))
+        self.assertFalse(create_group(groups, "All Recipients"))
+        self.assertFalse(create_group(groups, " all recipients "))
+        self.assertFalse(create_group(groups, "default"))
+        self.assertFalse(create_group(groups, "   "))
+        self.assertEqual(groups, [DEFAULT_GROUP, "Group", "Straße", "A组", "équipe"])
+
     def test_group_rename_updates_memberships(self):
         recipients = sample_recipients()
         recipients[0]["groups"] = ["Caregivers", "Follow-up"]
@@ -167,6 +184,28 @@ class GroupTests(unittest.TestCase):
         self.assertFalse(rename_group(recipients, groups, DEFAULT_GROUP, "Other"))
         self.assertFalse(rename_group(recipients, groups, "Caregivers", ""))
         self.assertFalse(rename_group(recipients, groups, "Caregivers", "Job Seekers"))
+
+    def test_group_rename_rejects_nfkc_equivalent_name(self):
+        recipients = sample_recipients()
+        groups = [DEFAULT_GROUP, "Caregivers", "A组"]
+        before_memberships = [list(recipient.get("groups", [])) for recipient in recipients]
+
+        self.assertFalse(rename_group(recipients, groups, "Caregivers", "Ａ组"))
+
+        self.assertEqual(groups, [DEFAULT_GROUP, "Caregivers", "A组"])
+        self.assertEqual([recipient.get("groups", []) for recipient in recipients], before_memberships)
+
+    def test_rejected_rename_preserves_groups_and_recipient_memberships(self):
+        recipients = sample_recipients()
+        groups = [DEFAULT_GROUP, "Caregivers", "Job Seekers"]
+        before_groups = list(groups)
+        before_memberships = [list(recipient.get("groups", [])) for recipient in recipients]
+
+        self.assertFalse(rename_group(recipients, groups, "Caregivers", " job seekers "))
+        self.assertFalse(rename_group(recipients, groups, "Caregivers", "ALL RECIPIENTS"))
+
+        self.assertEqual(groups, before_groups)
+        self.assertEqual([recipient.get("groups", []) for recipient in recipients], before_memberships)
 
     def test_group_delete_moves_recipients_to_default(self):
         recipients = sample_recipients()

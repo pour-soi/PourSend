@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
@@ -34,6 +36,58 @@ def add_dialog_header(layout: QVBoxLayout, title: str, description: str) -> None
     description_label.setWordWrap(True)
     layout.addWidget(title_label)
     layout.addWidget(description_label)
+
+
+class GroupNameDialog(QDialog):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        title: str,
+        initial_name: str = "",
+        validator: Callable[[str], str | None],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(380)
+        self.validator = validator
+        self.name_edit = QLineEdit(initial_name)
+        self.name_edit.setAccessibleName("Group name")
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet("color: #d92d20;")
+        self.error_label.hide()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Save")
+        mark_button(buttons.button(QDialogButtonBox.Ok), PRIMARY_BUTTON)
+        buttons.accepted.connect(self.validate_and_accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        add_dialog_header(layout, title, "Enter a unique group name.")
+        layout.addWidget(self.name_edit)
+        layout.addWidget(self.error_label)
+        layout.addWidget(buttons)
+
+    def validate_and_accept(self) -> None:
+        error = self.validator(self.name_edit.text())
+        if error:
+            self.error_label.setText(error)
+            self.error_label.show()
+            self.name_edit.setFocus()
+            return
+        self.accept()
+
+    def group_name(self) -> str:
+        return self.name_edit.text().strip()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.name_edit.setFocus()
+        self.name_edit.selectAll()
 
 
 class GroupColorDialog(QDialog):
